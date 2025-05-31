@@ -1,0 +1,10 @@
+Para rodar localmente:
+Instale as dependências (se ainda não tiver):
+pip install streamlit geopy pandas folium
+
+Salve os dois arquivos Python:
+agente_caixas_geoespacial.py (com o core da análise)
+interface_web_geoespacial.py (a interface web)
+
+Execute o app:
+streamlit run interface_web_geoespacial.py
