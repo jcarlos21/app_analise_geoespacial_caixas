@@ -62,3 +62,7 @@ if caixas_file:
 
         st.components.v1.html(mapa_html, height=600, scrolling=True)
         os.remove(mapa_path)
+
+# Rodapé
+st.markdown("---")
+st.markdown("<div style='text-align: center; color: gray;'>Desenvolvido por José Carlos dos Santos</div>", unsafe_allow_html=True)
