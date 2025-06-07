@@ -3,6 +3,8 @@ import requests
 from geopy.distance import geodesic
 import folium
 from folium.plugins import MarkerCluster
+import simplekml
+import os
 
 def calcular_rota_osrm(coord_origem, coord_destino):
     lat1, lon1 = coord_origem
@@ -24,6 +26,16 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         print(f"Erro ao calcular rota OSRM: {e}")
         return [], 0
 
+def gerar_kmz(nome_base, rota_coords):
+    kml = simplekml.Kml()
+    ls = kml.newlinestring(name=nome_base)
+    ls.coords = [(lon, lat) for lon, lat in rota_coords]
+    ls.style.linestyle.width = 3
+    ls.style.linestyle.color = simplekml.Color.red
+    kml_path = f"/mnt/data/{nome_base}.kmz"
+    kml.savekmz(kml_path)
+    return kml_path
+
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
     df_pontos.rename(columns={
@@ -36,10 +48,9 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
 
     resultados = []
 
-    for _, ponto in df_pontos.iterrows():
+    for index, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
 
-        # Etapa 1: encontrar a caixa mais próxima por geodésica
         menor_dist_geodesica = float('inf')
         caixa_proxima = None
 
@@ -51,11 +62,12 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
                 caixa_proxima = caixa
 
         coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
-
-        # Etapa 2: calcular a rota urbana real apenas para a caixa escolhida
         rota_coords, distancia_real = calcular_rota_osrm(coord_ponto, coord_caixa_proxima)
         if not rota_coords:
-            distancia_real = menor_dist_geodesica  # fallback
+            distancia_real = menor_dist_geodesica
+
+        nome_base = f"rota_ponto_{index+1}"
+        kmz_path = gerar_kmz(nome_base, rota_coords) if rota_coords else ""
 
         resultados.append({
             'Nome do Ponto de Referência': ponto.get('Nome', ''),
@@ -68,7 +80,8 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
             'Distância da Rota (m)': round(distancia_real, 2),
-            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else ''
+            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else '',
+            'Download da Rota (KMZ)': kmz_path
         })
 
     return pd.DataFrame(resultados)
