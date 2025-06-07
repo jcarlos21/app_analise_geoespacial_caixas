@@ -32,7 +32,7 @@ def gerar_kmz(nome_base, rota_coords):
     ls.coords = [(lon, lat) for lon, lat in rota_coords]
     ls.style.linestyle.width = 3
     ls.style.linestyle.color = simplekml.Color.red
-    kml_path = f"/mnt/data/{nome_base}.kmz"
+    kml_path = os.path.join(os.getcwd(), f"{nome_base}.kmz")
     kml.savekmz(kml_path)
     return kml_path
 
