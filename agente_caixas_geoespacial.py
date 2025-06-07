@@ -1,5 +1,28 @@
+import pandas as pd
+import requests
+from geopy.distance import geodesic
+import folium
+from folium.plugins import MarkerCluster
 
-# Agente ChatGPT: Análise Geoespacial de Caixas de Emenda óptica
+def calcular_rota_osrm(coord_origem, coord_destino):
+    lat1, lon1 = coord_origem
+    lat2, lon2 = coord_destino
+
+    url = (
+        f"https://router.project-osrm.org/route/v1/driving/"
+        f"{lon1},{lat1};{lon2},{lat2}"
+        f"?overview=full&geometries=geojson"
+    )
+
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        rota_coords = data['routes'][0]['geometry']['coordinates']
+        distancia_metros = data['routes'][0]['distance']
+        return rota_coords, distancia_metros
+    except Exception as e:
+        print(f"Erro ao calcular rota OSRM: {e}")
+        return [], 0
 
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
@@ -11,23 +34,28 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         'LONGITUDE': 'LONGITUDE'
     }, inplace=True)
 
-    from geopy.distance import geodesic
-    import pandas as pd
-
     resultados = []
-    caixas_coords = df_caixas[['Latitude', 'Longitude']].to_numpy()
 
     for _, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
-        menor_dist = float('inf')
+
+        # Etapa 1: encontrar a caixa mais próxima por geodésica
+        menor_dist_geodesica = float('inf')
         caixa_proxima = None
 
         for _, caixa in df_caixas.iterrows():
             coord_caixa = (caixa['Latitude'], caixa['Longitude'])
-            dist = geodesic(coord_ponto, coord_caixa).meters
-            if dist < menor_dist:
-                menor_dist = dist
+            dist_geo = geodesic(coord_ponto, coord_caixa).meters
+            if dist_geo < menor_dist_geodesica:
+                menor_dist_geodesica = dist_geo
                 caixa_proxima = caixa
+
+        coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
+
+        # Etapa 2: calcular a rota urbana real apenas para a caixa escolhida
+        rota_coords, distancia_real = calcular_rota_osrm(coord_ponto, coord_caixa_proxima)
+        if not rota_coords:
+            distancia_real = menor_dist_geodesica  # fallback
 
         resultados.append({
             'Nome do Ponto de Referência': ponto.get('Nome', ''),
@@ -39,22 +67,32 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Cidade': caixa_proxima['Cidade'],
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
-            'Distância Linear (m)': round(menor_dist, 2),
-            'Viabilidade': 'Conectável' if menor_dist < limite_fibra else ''
+            'Distância da Rota (m)': round(distancia_real, 2),
+            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else ''
         })
 
     return pd.DataFrame(resultados)
 
 def gerar_mapa_interativo(df_resultados, caminho_html):
-    import folium
-    from folium.plugins import MarkerCluster
-
     mapa = folium.Map(location=[-5.8, -36.6], zoom_start=8)
     marcadores = MarkerCluster().add_to(mapa)
 
     for _, linha in df_resultados.iterrows():
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
+
+        rota_coords, _ = calcular_rota_osrm((lat_ponto, lon_ponto), (lat_caixa, lon_caixa))
+        if rota_coords:
+            rota_convertida = [(lat, lon) for lon, lat in rota_coords]
+            folium.PolyLine(
+                locations=rota_convertida,
+                color='red', weight=3, tooltip="Rota real"
+            ).add_to(mapa)
+        else:
+            folium.PolyLine(
+                locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
+                color='gray', weight=2, dash_array="5,5", tooltip="Rota linear (falha OSRM)"
+            ).add_to(mapa)
 
         folium.Marker(
             location=[lat_ponto, lon_ponto],
@@ -67,11 +105,6 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
             popup=f"<b>Caixa:</b> {linha['Identificador']}<br><b>{linha['Cidade']} - {linha['Estado']}</b>",
             icon=folium.Icon(color='green', icon='hdd', prefix='fa')
         ).add_to(marcadores)
-
-        folium.PolyLine(
-            locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
-            color='red', weight=2, tooltip=f"{linha['Distância Linear (m)']} m"
-        ).add_to(mapa)
 
     mapa.save(caminho_html)
     return caminho_html
