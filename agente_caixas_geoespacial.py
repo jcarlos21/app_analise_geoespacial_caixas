@@ -21,6 +21,11 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         data = resp.json()
         rota_coords = data['routes'][0]['geometry']['coordinates']
         distancia_metros = data['routes'][0]['distance']
+
+        # Inserir o ponto exato de origem (caixa) no início e destino (ponto consultado) no fim
+        rota_coords.insert(0, [lon1, lat1])  # início
+        rota_coords.append([lon2, lat2])     # fim
+
         return rota_coords, distancia_metros
     except Exception as e:
         print(f"Erro ao calcular rota OSRM: {e}")
