@@ -36,11 +36,12 @@ def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caix
     linha.style.linestyle.width = 4
 
     # Ponto consultado
-    kml.newpoint(
+    ponto_ref = kml.newpoint(
         name="Ponto de Referência",
         coords=[ponto_consultado],
         description=f"Localização consultada: {ponto_consultado}",
-    ).style.iconstyle.color = simplekml.Color.green
+    )
+    ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
 
     # Caixa mais próxima
     caixa_ponto = kml.newpoint(
