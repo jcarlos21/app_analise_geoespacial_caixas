@@ -7,8 +7,8 @@ import simplekml
 import os
 
 def calcular_rota_osrm(coord_origem, coord_destino):
-    lat1, lon1 = coord_origem
-    lat2, lon2 = coord_destino
+    lat1, lon1 = coord_origem  # caixa
+    lat2, lon2 = coord_destino  # ponto consultado
 
     url = (
         f"https://router.project-osrm.org/route/v1/driving/"
@@ -20,13 +20,28 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         resp = requests.get(url)
         data = resp.json()
         rota_coords = data['routes'][0]['geometry']['coordinates']
-        distancia_metros = data['routes'][0]['distance']
+        distancia_urbana = data['routes'][0]['distance']
 
-        # Inserir o ponto exato de origem (caixa) no início e destino (ponto consultado) no fim
-        rota_coords.insert(0, [lon1, lat1])  # início
-        rota_coords.append([lon2, lat2])     # fim
+        # Conversões para cálculo de trechos
+        ponto_inicial_osrm = rota_coords[0]
+        ponto_final_osrm = rota_coords[-1]
 
-        return rota_coords, distancia_metros
+        # OSRM coords estão como [lon, lat] → inverter para [lat, lon]
+        ponto_inicial = (ponto_inicial_osrm[1], ponto_inicial_osrm[0])
+        ponto_final = (ponto_final_osrm[1], ponto_final_osrm[0])
+
+        # Cálculos geodésicos adicionais
+        distancia_inicial = geodesic(coord_origem, ponto_inicial).meters
+        distancia_final = geodesic(coord_destino, ponto_final).meters
+
+        # Distância total real
+        distancia_total_real = distancia_inicial + distancia_urbana + distancia_final
+
+        # Adicionar pontos reais à rota
+        rota_coords.insert(0, [lon1, lat1])  # caixa real
+        rota_coords.append([lon2, lat2])     # ponto real
+
+        return rota_coords, distancia_total_real
     except Exception as e:
         print(f"Erro ao calcular rota OSRM: {e}")
         return [], 0
