@@ -26,19 +26,34 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         print(f"Erro ao calcular rota OSRM: {e}")
         return [], 0
 
-def gerar_kmz(nome_base, rota_coords):
-    import os
-    pasta_kmz = os.path.join(os.getcwd(), "rotas_kmz")
-    os.makedirs(pasta_kmz, exist_ok=True)  # cria a pasta se não existir
-
+def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima):
     kml = simplekml.Kml()
-    ls = kml.newlinestring(name=nome_base)
-    ls.coords = [(lon, lat) for lon, lat in rota_coords]
-    ls.style.linestyle.width = 3
-    ls.style.linestyle.color = simplekml.Color.red
 
-    kml_path = os.path.join(pasta_kmz, f"{nome_base}.kmz")
+    # Linha entre ponto e caixa
+    linha = kml.newlinestring(name="Rota entre ponto e caixa")
+    linha.coords = rota_coords
+    linha.style.linestyle.color = simplekml.Color.red
+    linha.style.linestyle.width = 4
+
+    # Ponto consultado
+    kml.newpoint(
+        name="Ponto de Referência",
+        coords=[ponto_consultado],
+        description=f"Localização consultada: {ponto_consultado}",
+    ).style.iconstyle.color = simplekml.Color.green
+
+    # Caixa mais próxima
+    kml.newpoint(
+        name="Caixa de Emenda Óptica",
+        coords=[caixa_mais_proxima],
+        description=f"Caixa mais próxima: {caixa_mais_proxima}",
+    ).style.iconstyle.color = simplekml.Color.blue
+
+    # Salvar KMZ
+    os.makedirs("saida_kmz", exist_ok=True)
+    kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
     kml.savekmz(kml_path)
+
     return kml_path
 
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
@@ -72,7 +87,10 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             distancia_real = menor_dist_geodesica
 
         nome_base = f"rota_ponto_{index+1}"
-        kmz_path = gerar_kmz(nome_base, rota_coords) if rota_coords else ""
+        ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
+        caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
+
+        kmz_path = gerar_kmz(nome_base, rota_coords, ponto_coords, caixa_coords) if rota_coords else ""
 
         resultados.append({
             'Nome do Ponto de Referência': ponto.get('Nome', ''),
