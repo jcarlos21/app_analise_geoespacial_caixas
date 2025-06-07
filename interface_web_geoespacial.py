@@ -1,7 +1,6 @@
-
 import streamlit as st
 import pandas as pd
-from agente_caixas_geoespacial import analisar_distancia_entre_pontos, gerar_mapa_interativo
+from agente_caixas_geoespacial_com_kmz import analisar_distancia_entre_pontos, gerar_mapa_interativo
 import tempfile
 import os
 
@@ -49,11 +48,20 @@ if caixas_file:
 
     if 'df_resultado' in locals() and df_resultado is not None:
         st.success("Análise concluída!")
-        st.dataframe(df_resultado)
 
-        csv = df_resultado.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Baixar Resultado em CSV", data=csv, file_name="resultado_geoespacial.csv", mime="text/csv")
+        # Criar coluna de botões de download
+        for i in df_resultado.index:
+            kmz_path = df_resultado.at[i, "Download da Rota (KMZ)"]
+            if os.path.exists(kmz_path):
+                with open(kmz_path, "rb") as f:
+                    btn_label = f"📥 Baixar KMZ - Ponto {i+1}"
+                    st.download_button(btn_label, f.read(), file_name=os.path.basename(kmz_path), mime="application/vnd.google-earth.kmz")
 
+        # Exibir a tabela sem a coluna de caminho de arquivo
+        df_mostrar = df_resultado.drop(columns=["Download da Rota (KMZ)"])
+        st.dataframe(df_mostrar)
+
+        # Gerar e exibir o mapa
         with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
             mapa_path = tmp.name
             gerar_mapa_interativo(df_resultado, mapa_path)
