@@ -34,9 +34,9 @@ if caixas_file:
                 lat = float(lat_str)
                 lon = float(lon_str)
                 df_pontos = pd.DataFrame([{
-                    "Nome": "Ponto Manual",
-                    "Cidade": "",
-                    "Estado": "",
+                    "NOME": "Ponto Manual",
+                    "CIDADE": "",
+                    "ESTADO": "",
                     "LATITUDE": lat,
                     "LONGITUDE": lon
                 }])

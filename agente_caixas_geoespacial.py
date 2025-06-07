@@ -43,11 +43,14 @@ def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima):
     ).style.iconstyle.color = simplekml.Color.green
 
     # Caixa mais próxima
-    kml.newpoint(
-        name="Caixa de Emenda Óptica",
+    caixa_ponto = kml.newpoint(
+        name="{}".format(caixa_mais_proxima_nome),
         coords=[caixa_mais_proxima],
-        description=f"Caixa mais próxima: {caixa_mais_proxima}",
-    ).style.iconstyle.color = simplekml.Color.blue
+        description=f"Coordenadas: {caixa_mais_proxima}",
+    )
+    caixa_ponto.style.iconstyle.color = simplekml.Color.white
+    caixa_ponto.style.iconstyle.scale = 1.2
+    caixa_ponto.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
 
     # Salvar KMZ
     os.makedirs("saida_kmz", exist_ok=True)
