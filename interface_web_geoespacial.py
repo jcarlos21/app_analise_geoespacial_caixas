@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from agente_caixas_geoespacial_com_kmz import analisar_distancia_entre_pontos, gerar_mapa_interativo
+from agente_caixas_geoespacial import analisar_distancia_entre_pontos, gerar_mapa_interativo
 import tempfile
 import os
 
