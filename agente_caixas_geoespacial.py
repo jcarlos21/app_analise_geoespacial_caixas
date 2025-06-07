@@ -46,7 +46,7 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         print(f"Erro ao calcular rota OSRM: {e}")
         return [], 0
 
-def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caixa_mais_proxima_nome):
+def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caixa_mais_proxima_nome, nome_ponto_referencia=None):
     kml = simplekml.Kml()
 
     # Linha entre ponto e caixa
@@ -55,9 +55,12 @@ def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caix
     linha.style.linestyle.color = simplekml.Color.red
     linha.style.linestyle.width = 4
 
+    # Definir nome do ponto
+    nome_ponto_kmz = nome_ponto_referencia if nome_ponto_referencia else "Ponto de Referência"
+
     # Ponto consultado
     ponto_ref = kml.newpoint(
-        name="Ponto de Referência",
+        name=nome_ponto_kmz,
         coords=[ponto_consultado],
         description=f"Localização consultada: {ponto_consultado}",
     )
@@ -114,7 +117,17 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
         caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
 
-        kmz_path = gerar_kmz(nome_base, rota_coords, ponto_coords, caixa_coords, caixa_proxima["Sigla"]) if rota_coords else ""
+        # kmz_path = gerar_kmz(nome_base, rota_coords, ponto_coords, caixa_coords, caixa_proxima["Sigla"]) if rota_coords else ""
+        
+        nome_ponto = ponto.get('Nome', '').strip()
+        kmz_path = gerar_kmz(
+            nome_base,
+            rota_coords,
+            ponto_coords,
+            caixa_coords,
+            caixa_proxima["Sigla"],
+            nome_ponto_referencia=nome_ponto if nome_ponto else None
+        ) if rota_coords else ""
 
         resultados.append({
             'Nome do Ponto de Referência': ponto.get('Nome', ''),
