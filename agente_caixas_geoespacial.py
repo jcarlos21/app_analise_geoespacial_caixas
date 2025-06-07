@@ -27,12 +27,17 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         return [], 0
 
 def gerar_kmz(nome_base, rota_coords):
+    import os
+    pasta_kmz = os.path.join(os.getcwd(), "rotas_kmz")
+    os.makedirs(pasta_kmz, exist_ok=True)  # cria a pasta se não existir
+
     kml = simplekml.Kml()
     ls = kml.newlinestring(name=nome_base)
     ls.coords = [(lon, lat) for lon, lat in rota_coords]
     ls.style.linestyle.width = 3
     ls.style.linestyle.color = simplekml.Color.red
-    kml_path = os.path.join(os.getcwd(), f"{nome_base}.kmz")
+
+    kml_path = os.path.join(pasta_kmz, f"{nome_base}.kmz")
     kml.savekmz(kml_path)
     return kml_path
 
