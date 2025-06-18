@@ -94,6 +94,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
     }, inplace=True)
 
     resultados = []
+    rotas_para_kmz_unico = []
 
     for index, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
@@ -113,29 +114,30 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         if not rota_coords:
             distancia_real = menor_dist_geodesica
 
-        nome_base = f"rota_ponto_{index+1}"
         ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
         caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
-
-        # kmz_path = gerar_kmz(nome_base, rota_coords, ponto_coords, caixa_coords, caixa_proxima["Sigla"]) if rota_coords else ""
-        
         nome_ponto = ponto.get('Nome', '').strip()
-        kmz_path = gerar_kmz(
-            nome_base,
-            rota_coords,
-            ponto_coords,
-            caixa_coords,
-            caixa_proxima["Sigla"],
-            nome_ponto_referencia=nome_ponto if nome_ponto else None
-        ) if rota_coords else ""
+        nome_caixa = caixa_proxima["Sigla"]
+
+        if rota_coords:
+            rotas_para_kmz_unico.append({
+                "rota_coords": rota_coords,
+                "ponto_coords": ponto_coords,
+                "nome_ponto": nome_ponto if nome_ponto else f"Ponto {index+1}",
+                "caixa_coords": caixa_coords,
+                "nome_caixa": nome_caixa
+            })
+            kmz_path = "[Gerado em KMZ único]"
+        else:
+            kmz_path = ""
 
         resultados.append({
-            'Nome do Ponto de Referência': ponto.get('Nome', ''),
+            'Nome do Ponto de Referência': nome_ponto,
             'Cidade do Ponto': ponto.get('Cidade', ''),
             'Estado do Ponto': ponto.get('Estado', ''),
             'Localização do Ponto': f"{ponto['LATITUDE']}, {ponto['LONGITUDE']}",
             'Localização da Caixa': f"{caixa_proxima['Latitude']}, {caixa_proxima['Longitude']}",
-            'Identificador': caixa_proxima['Sigla'],
+            'Identificador': nome_caixa,
             'Cidade': caixa_proxima['Cidade'],
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
@@ -143,6 +145,12 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Viabilidade': 'Conectável' if distancia_real < limite_fibra else '',
             'Download da Rota (KMZ)': kmz_path
         })
+
+    if rotas_para_kmz_unico:
+        nome_arquivo_unico = "rotas_completas"
+        kmz_unico_path = gerar_kmz_unico(nome_arquivo_unico, rotas_para_kmz_unico)
+        for resultado in resultados:
+            resultado["Download da Rota (KMZ)"] = kmz_unico_path
 
     return pd.DataFrame(resultados)
 
@@ -181,3 +189,43 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
 
     mapa.save(caminho_html)
     return caminho_html
+
+
+def gerar_kmz_unico(nome_base, rotas_info):
+    kml = simplekml.Kml()
+
+    for item in rotas_info:
+        rota_coords = item["rota_coords"]
+        ponto_consultado = item["ponto_coords"]
+        nome_ponto = item["nome_ponto"]
+        caixa_coords = item["caixa_coords"]
+        nome_caixa = item["nome_caixa"]
+
+        # Linha
+        linha = kml.newlinestring(name=f"Rota - {nome_ponto}")
+        linha.coords = rota_coords
+        linha.style.linestyle.color = simplekml.Color.red
+        linha.style.linestyle.width = 4
+
+        # Ponto
+        ponto_ref = kml.newpoint(
+            name=nome_ponto,
+            coords=[ponto_consultado],
+            description=f"Localização consultada: {ponto_consultado}",
+        )
+        ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
+
+        # Caixa
+        caixa_ponto = kml.newpoint(
+            name=nome_caixa,
+            coords=[caixa_coords],
+            description=f"Coordenadas: {caixa_coords}",
+        )
+        caixa_ponto.style.iconstyle.color = simplekml.Color.white
+        caixa_ponto.style.iconstyle.scale = 1.2
+        caixa_ponto.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
+
+    os.makedirs("saida_kmz", exist_ok=True)
+    kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
+    kml.savekmz(kml_path)
+    return kml_path
