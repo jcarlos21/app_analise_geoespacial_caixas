@@ -131,6 +131,9 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         else:
             kmz_path = ""
 
+        distancia_metros = round(distancia_real, 2)
+        tipo_cabo = "Cabo Drop" if distancia_metros < 250 else "Cabo AS"
+
         resultados.append({
             'Nome do Ponto de Referência': nome_ponto,
             'Cidade do Ponto': ponto.get('Cidade', ''),
@@ -141,8 +144,9 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Cidade': caixa_proxima['Cidade'],
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
-            'Distância da Rota (m)': round(distancia_real, 2),
-            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else '',
+            'Distância da Rota (m)': distancia_metros,
+            'Tipo de Cabo': tipo_cabo,
+            'Viabilidade': 'Conectável' if distancia_metros < limite_fibra else '',
             'Download da Rota (KMZ)': kmz_path
         })
 
