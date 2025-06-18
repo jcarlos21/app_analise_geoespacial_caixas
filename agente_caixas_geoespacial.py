@@ -132,7 +132,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             kmz_path = ""
 
         distancia_metros = round(distancia_real, 2)
-        tipo_cabo = "Cabo Drop" if distancia_metros < 250 else "Cabo AS"
+        tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
 
         resultados.append({
             'Nome do Ponto de Referência': nome_ponto,
