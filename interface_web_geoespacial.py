@@ -49,15 +49,12 @@ if caixas_file:
     if 'df_resultado' in locals() and df_resultado is not None:
         st.success("Análise concluída!")
 
-        # Criar coluna de botões de download
-        for i in df_resultado.index:
-            kmz_path = df_resultado.at[i, "Download da Rota (KMZ)"]
-            if os.path.exists(kmz_path):
-                with open(kmz_path, "rb") as f:
-                    btn_label = f"📥 Baixar KMZ - Ponto {i+1}"
-                    st.download_button(btn_label, f.read(), file_name=os.path.basename(kmz_path), mime="application/vnd.google-earth.kmz")
+        # Criar botão único de download, se o KMZ existir
+        kmz_path_unico = df_resultado["Download da Rota (KMZ)"].iloc[0]
+        if os.path.exists(kmz_path_unico):
+            with open(kmz_path_unico, "rb") as f:
+                st.download_button("📥 Baixar KMZ com todas as rotas", f.read(), file_name=os.path.basename(kmz_path_unico), mime="application/vnd.google-earth.kmz")
 
-        # Exibir a tabela sem a coluna de caminho de arquivo
         df_mostrar = df_resultado.drop(columns=["Download da Rota (KMZ)"])
         st.dataframe(df_mostrar)
 
