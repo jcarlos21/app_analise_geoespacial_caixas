@@ -167,7 +167,8 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
             rota_convertida = [(lat, lon) for lon, lat in rota_coords]
             folium.PolyLine(
                 locations=rota_convertida,
-                color='red', weight=3, tooltip="Rota real"
+                color='red', weight=3,
+                tooltip=f"{linha['Distância da Rota (m)']} metros."
             ).add_to(mapa)
         else:
             folium.PolyLine(
