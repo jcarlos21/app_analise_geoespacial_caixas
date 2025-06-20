@@ -16,12 +16,21 @@ opcao = st.radio("Como deseja fornecer o(s) ponto(s) de referência?", ["📄 En
 if caixas_file:
     df_caixas = pd.read_excel(caixas_file)
 
+    # Filtro por cidade
+    cidades_disponiveis = sorted(df_caixas['Cidade'].dropna().unique())
+    cidades_selecionadas = st.multiselect(
+        "Filtrar por cidade das caixas disponíveis:",
+        options=cidades_disponiveis,
+        default=cidades_disponiveis
+    )
+    df_caixas_filtrado = df_caixas[df_caixas['Cidade'].isin(cidades_selecionadas)]
+
     if opcao == "📄 Enviar arquivo Excel":
         pontos_file = st.file_uploader("📌 Arquivo de Pontos de Referência (Excel)", type=[".xlsx"])
         if pontos_file:
             df_pontos = pd.read_excel(pontos_file)
             with st.spinner("Calculando distâncias e avaliando viabilidade..."):
-                df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas, limite)
+                df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas_filtrado, limite)
 
     else:
         with st.form("form_coords"):
@@ -41,7 +50,7 @@ if caixas_file:
                     "LONGITUDE": lon
                 }])
                 with st.spinner("Calculando distância para o ponto informado..."):
-                    df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas, limite)
+                    df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas_filtrado, limite)
             except Exception as e:
                 st.error(f"Erro ao interpretar a localização: {e}")
                 df_resultado = None
