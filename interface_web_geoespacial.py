@@ -9,11 +9,9 @@ st.set_page_config(page_title="Análise Geoespacial - Caixas de Emenda", layout=
 st.title("📍 Análise Geoespacial de Caixas de Emenda")
 st.markdown("Envie os arquivos ou informe uma localização para identificar a caixa de emenda óptica mais próxima.")
 
-# Upload do arquivo de caixas
 caixas_file = st.file_uploader("🛠️ Arquivo de Caixas de Emenda (Excel)", type=[".xlsx"])
 limite = st.slider("Limite de Distância para Viabilidade (m)", 50, 1000, 350, 50)
 
-# Opções de entrada do ponto de referência
 opcao = st.radio("Como deseja fornecer o(s) ponto(s) de referência?", ["📄 Enviar arquivo Excel", "🧭 Informar localização manualmente"])
 
 if caixas_file:
@@ -28,25 +26,28 @@ if caixas_file:
 
     else:
         with st.form("form_coords"):
-            nome = st.text_input("Nome do ponto de referência", "Ponto Manual")
-            cidade = st.text_input("Cidade", "Exemplo")
-            estado = st.text_input("Estado", "XX")
-            lat = st.number_input("Latitude", format="%.8f")
-            lon = st.number_input("Longitude", format="%.8f")
+            localizacao_str = st.text_input("Localização (formato: latitude, longitude)", "-5.642754149445223, -35.42481501421498")
             submitted = st.form_submit_button("Calcular")
 
         if submitted:
-            df_pontos = pd.DataFrame([{
-                "Nome": nome,
-                "Cidade": cidade,
-                "Estado": estado,
-                "LATITUDE": lat,
-                "LONGITUDE": lon
-            }])
-            with st.spinner("Calculando distância para o ponto informado..."):
-                df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas, limite)
+            try:
+                lat_str, lon_str = [x.strip() for x in localizacao_str.split(",")]
+                lat = float(lat_str)
+                lon = float(lon_str)
+                df_pontos = pd.DataFrame([{
+                    "Nome": "Ponto Manual",
+                    "Cidade": "",
+                    "Estado": "",
+                    "LATITUDE": lat,
+                    "LONGITUDE": lon
+                }])
+                with st.spinner("Calculando distância para o ponto informado..."):
+                    df_resultado = analisar_distancia_entre_pontos(df_pontos, df_caixas, limite)
+            except Exception as e:
+                st.error(f"Erro ao interpretar a localização: {e}")
+                df_resultado = None
 
-    if 'df_resultado' in locals():
+    if 'df_resultado' in locals() and df_resultado is not None:
         st.success("Análise concluída!")
         st.dataframe(df_resultado)
 

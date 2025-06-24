@@ -2,7 +2,6 @@
 # Agente ChatGPT: Análise Geoespacial de Caixas de Emenda óptica
 
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
-    # Padroniza os nomes das colunas para garantir compatibilidade
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
     df_pontos.rename(columns={
         'NOME': 'Nome',
@@ -31,9 +30,9 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
                 caixa_proxima = caixa
 
         resultados.append({
-            'Nome do Ponto de Referência': ponto['Nome'],
-            'Cidade do Ponto': ponto['Cidade'],
-            'Estado do Ponto': ponto['Estado'],
+            'Nome do Ponto de Referência': ponto.get('Nome', ''),
+            'Cidade do Ponto': ponto.get('Cidade', ''),
+            'Estado do Ponto': ponto.get('Estado', ''),
             'Localização do Ponto': f"{ponto['LATITUDE']}, {ponto['LONGITUDE']}",
             'Localização da Caixa': f"{caixa_proxima['Latitude']}, {caixa_proxima['Longitude']}",
             'Identificador': caixa_proxima['Sigla'],
