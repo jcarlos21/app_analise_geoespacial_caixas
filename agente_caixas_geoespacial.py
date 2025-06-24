@@ -1,88 +1,5 @@
-import pandas as pd
-import requests
-from geopy.distance import geodesic
-import folium
-from folium.plugins import MarkerCluster
-import simplekml
-import os
-from shapely.geometry import LineString, Point
 
-def calcular_rota_osrm(coord_origem, coord_destino):
-    lat1, lon1 = coord_origem  # caixa
-    lat2, lon2 = coord_destino  # ponto consultado
-
-    url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
-        f"{lon1},{lat1};{lon2},{lat2}"
-        f"?overview=full&geometries=geojson"
-    )
-
-    try:
-        resp = requests.get(url)
-        data = resp.json()
-        rota_coords = data['routes'][0]['geometry']['coordinates']
-        distancia_urbana = data['routes'][0]['distance']
-
-        # Conversões para cálculo de trechos
-        ponto_inicial_osrm = rota_coords[0]
-        ponto_final_osrm = rota_coords[-1]
-
-        # OSRM coords estão como [lon, lat] → inverter para [lat, lon]
-        ponto_inicial = (ponto_inicial_osrm[1], ponto_inicial_osrm[0])
-        ponto_final = (ponto_final_osrm[1], ponto_final_osrm[0])
-
-        # Cálculos geodésicos adicionais
-        distancia_inicial = geodesic(coord_origem, ponto_inicial).meters
-        distancia_final = geodesic(coord_destino, ponto_final).meters
-
-        # Distância total real
-        distancia_total_real = distancia_inicial + distancia_urbana + distancia_final
-
-        # Adicionar pontos reais à rota
-        rota_coords.insert(0, [lon1, lat1])  # caixa real
-        rota_coords.append([lon2, lat2])     # ponto real
-
-        return rota_coords, distancia_total_real
-    except Exception as e:
-        print(f"Erro ao calcular rota OSRM: {e}")
-        return [], 0
-
-def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caixa_mais_proxima_nome, nome_ponto_referencia=None):
-    kml = simplekml.Kml()
-
-    # Linha entre ponto e caixa
-    linha = kml.newlinestring(name="Rota entre ponto e caixa")
-    linha.coords = rota_coords
-    linha.style.linestyle.color = simplekml.Color.red
-    linha.style.linestyle.width = 4
-
-    # Definir nome do ponto
-    nome_ponto_kmz = nome_ponto_referencia if nome_ponto_referencia else "Ponto de Referência"
-
-    # Ponto consultado
-    ponto_ref = kml.newpoint(
-        name=nome_ponto_kmz,
-        coords=[ponto_consultado],
-        description=f"Localização consultada: {ponto_consultado}",
-    )
-    ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
-
-    # Caixa mais próxima
-    caixa_ponto = kml.newpoint(
-        name="{}".format(caixa_mais_proxima_nome),
-        coords=[caixa_mais_proxima],
-        description=f"Coordenadas: {caixa_mais_proxima}",
-    )
-    caixa_ponto.style.iconstyle.color = simplekml.Color.white
-    caixa_ponto.style.iconstyle.scale = 1.2
-    caixa_ponto.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
-
-    # Salvar KMZ
-    os.makedirs("saida_kmz", exist_ok=True)
-    kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
-    kml.savekmz(kml_path)
-
-    return kml_path
+# Agente ChatGPT: Análise Geoespacial de Caixas de Emenda óptica
 
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
@@ -94,88 +11,50 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         'LONGITUDE': 'LONGITUDE'
     }, inplace=True)
 
+    from geopy.distance import geodesic
+    import pandas as pd
+
     resultados = []
-    rotas_para_kmz_unico = []
+    caixas_coords = df_caixas[['Latitude', 'Longitude']].to_numpy()
 
-    for index, ponto in df_pontos.iterrows():
+    for _, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
-
-        menor_dist_geodesica = float('inf')
+        menor_dist = float('inf')
         caixa_proxima = None
 
         for _, caixa in df_caixas.iterrows():
             coord_caixa = (caixa['Latitude'], caixa['Longitude'])
-            dist_geo = geodesic(coord_ponto, coord_caixa).meters
-            if dist_geo < menor_dist_geodesica:
-                menor_dist_geodesica = dist_geo
+            dist = geodesic(coord_ponto, coord_caixa).meters
+            if dist < menor_dist:
+                menor_dist = dist
                 caixa_proxima = caixa
 
-        coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
-        rota_coords, distancia_real = calcular_rota_osrm(coord_ponto, coord_caixa_proxima)
-        if not rota_coords:
-            distancia_real = menor_dist_geodesica
-
-        ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
-        caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
-        nome_ponto = ponto.get('Nome', '').strip()
-        nome_caixa = caixa_proxima["Sigla"]
-
-        if rota_coords:
-            rotas_para_kmz_unico.append({
-                "rota_coords": rota_coords,
-                "ponto_coords": ponto_coords,
-                "nome_ponto": nome_ponto if nome_ponto else f"Ponto {index+1}",
-                "caixa_coords": caixa_coords,
-                "nome_caixa": nome_caixa
-            })
-            kmz_path = "[Gerado em KMZ único]"
-        else:
-            kmz_path = ""
-
         resultados.append({
-            'Nome do Ponto de Referência': nome_ponto,
+            'Nome do Ponto de Referência': ponto.get('Nome', ''),
             'Cidade do Ponto': ponto.get('Cidade', ''),
             'Estado do Ponto': ponto.get('Estado', ''),
             'Localização do Ponto': f"{ponto['LATITUDE']}, {ponto['LONGITUDE']}",
             'Localização da Caixa': f"{caixa_proxima['Latitude']}, {caixa_proxima['Longitude']}",
-            'Identificador': nome_caixa,
+            'Identificador': caixa_proxima['Sigla'],
             'Cidade': caixa_proxima['Cidade'],
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
-            'Distância da Rota (m)': round(distancia_real, 2),
-            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else '',
-            'Download da Rota (KMZ)': kmz_path
+            'Distância Linear (m)': round(menor_dist, 2),
+            'Viabilidade': 'Conectável' if menor_dist < limite_fibra else ''
         })
-
-    if rotas_para_kmz_unico:
-        nome_arquivo_unico = "rotas_completas"
-        kmz_unico_path = gerar_kmz_unico(nome_arquivo_unico, rotas_para_kmz_unico)
-        for resultado in resultados:
-            resultado["Download da Rota (KMZ)"] = kmz_unico_path
 
     return pd.DataFrame(resultados)
 
 def gerar_mapa_interativo(df_resultados, caminho_html):
+    import folium
+    from folium.plugins import MarkerCluster
+
     mapa = folium.Map(location=[-5.8, -36.6], zoom_start=8)
     marcadores = MarkerCluster().add_to(mapa)
 
     for _, linha in df_resultados.iterrows():
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
-
-        rota_coords, _ = calcular_rota_osrm((lat_ponto, lon_ponto), (lat_caixa, lon_caixa))
-        if rota_coords:
-            rota_convertida = [(lat, lon) for lon, lat in rota_coords]
-            folium.PolyLine(
-                locations=rota_convertida,
-                color='red', weight=3,
-                tooltip=f"{linha['Distância da Rota (m)']} metros."
-            ).add_to(mapa)
-        else:
-            folium.PolyLine(
-                locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
-                color='gray', weight=2, dash_array="5,5", tooltip="Rota linear (falha OSRM)"
-            ).add_to(mapa)
 
         folium.Marker(
             location=[lat_ponto, lon_ponto],
@@ -189,93 +68,10 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
             icon=folium.Icon(color='green', icon='hdd', prefix='fa')
         ).add_to(marcadores)
 
-        # Adicionar postes sobre a rota
-        if os.path.exists("postes_filtrados.csv"):
-            df_postes = pd.read_csv("postes_filtrados.csv")
-            for _, poste in df_postes.iterrows():
-                folium.CircleMarker(
-                    location=[poste["Latitude"], poste["Longitude"]],
-                    radius=3,
-                    color="orange",
-                    fill=True,
-                    fill_opacity=0.7,
-                    popup="Poste Próximo à Rota"
-                ).add_to(marcadores)
-
+        folium.PolyLine(
+            locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
+            color='red', weight=2, tooltip=f"{linha['Distância Linear (m)']} m"
+        ).add_to(mapa)
 
     mapa.save(caminho_html)
     return caminho_html
-
-
-def gerar_kmz_unico(nome_base, rotas_info):
-    kml = simplekml.Kml()
-
-    for item in rotas_info:
-        rota_coords = item["rota_coords"]
-        ponto_consultado = item["ponto_coords"]
-        nome_ponto = item["nome_ponto"]
-        caixa_coords = item["caixa_coords"]
-        nome_caixa = item["nome_caixa"]
-
-        # Linha
-        linha = kml.newlinestring(name=f"Rota - {nome_ponto}")
-        linha.coords = rota_coords
-        linha.style.linestyle.color = simplekml.Color.red
-        linha.style.linestyle.width = 4
-
-        # Ponto
-        ponto_ref = kml.newpoint(
-            name=nome_ponto,
-            coords=[ponto_consultado],
-            description=f"Localização consultada: {ponto_consultado}",
-        )
-        ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
-
-        # Caixa
-        caixa_ponto = kml.newpoint(
-            name=nome_caixa,
-            coords=[caixa_coords],
-            description=f"Coordenadas: {caixa_coords}",
-        )
-        caixa_ponto.style.iconstyle.color = simplekml.Color.white
-        caixa_ponto.style.iconstyle.scale = 1.2
-        caixa_ponto.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
-
-    os.makedirs("saida_kmz", exist_ok=True)
-    kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
-    kml.savekmz(kml_path)
-    return kml_path
-
-def filtrar_postes_proximos_rota(df_postes, rota_coords, tolerancia_m=25):
-    linha_rota = LineString(rota_coords)  # OSRM coords: (lon, lat)
-    postes_proximos = []
-
-    for _, row in df_postes.iterrows():
-        ponto_poste = Point(row['Longitude'], row['Latitude'])  # (lon, lat)
-        distancia_m = linha_rota.distance(ponto_poste) * 111139  # grau → metros
-        if distancia_m <= tolerancia_m:
-            postes_proximos.append({
-                "Latitude": row["Latitude"],
-                "Longitude": row["Longitude"]
-            })
-
-    return postes_proximos
-
-def calcular_rota_via_postes(coord_caixa, coord_ponto, postes_ordenados):
-    waypoints = [coord_caixa] + postes_ordenados + [coord_ponto]
-    coordenadas_str = ';'.join([f"{lon},{lat}" for lat, lon in waypoints])
-
-    url = (
-        f"https://router.project-osrm.org/route/v1/driving/{coordenadas_str}"
-        f"?overview=full&geometries=geojson"
-    )
-
-    try:
-        resp = requests.get(url)
-        data = resp.json()
-        rota_coords = data['routes'][0]['geometry']['coordinates']
-        distancia_total = data['routes'][0]['distance']
-        return rota_coords, distancia_total
-    except Exception as e:
-        print(f"Erro ao calcular rota com postes: {e}")
-        return [], 0
