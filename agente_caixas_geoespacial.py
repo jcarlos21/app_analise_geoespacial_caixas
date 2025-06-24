@@ -1,3 +1,4 @@
+
 # Agente ChatGPT: Análise Geoespacial de Caixas de Emenda óptica
 
 def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
@@ -11,10 +12,6 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         'LONGITUDE': 'LONGITUDE'
     }, inplace=True)
 
-    """
-    Para cada ponto de referência (cliente, escola, hub, etc.), encontra a caixa de emenda óptica mais próxima,
-    calcula a distância geodésica (reta) e determina a viabilidade de atendimento via fibra com base em um limite.
-    """
     from geopy.distance import geodesic
     import pandas as pd
 
