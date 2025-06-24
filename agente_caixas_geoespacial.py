@@ -5,6 +5,7 @@ import folium
 from folium.plugins import MarkerCluster
 import simplekml
 import os
+from shapely.geometry import LineString, Point
 
 def calcular_rota_osrm(coord_origem, coord_destino):
     lat1, lon1 = coord_origem  # caixa
@@ -131,9 +132,6 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
         else:
             kmz_path = ""
 
-        distancia_metros = round(distancia_real, 2)
-        tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
-
         resultados.append({
             'Nome do Ponto de Referência': nome_ponto,
             'Cidade do Ponto': ponto.get('Cidade', ''),
@@ -144,9 +142,8 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Cidade': caixa_proxima['Cidade'],
             'Estado': caixa_proxima['Estado'],
             'Categoria': caixa_proxima['Pasta'],
-            'Distância da Rota (m)': distancia_metros,
-            'Tipo de Cabo': tipo_cabo,
-            'Viabilidade': 'Conectável' if distancia_metros < limite_fibra else '',
+            'Distância da Rota (m)': round(distancia_real, 2),
+            'Viabilidade': 'Conectável' if distancia_real < limite_fibra else '',
             'Download da Rota (KMZ)': kmz_path
         })
 
@@ -192,6 +189,20 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
             icon=folium.Icon(color='green', icon='hdd', prefix='fa')
         ).add_to(marcadores)
 
+        # Adicionar postes sobre a rota
+        if os.path.exists("postes_filtrados.csv"):
+            df_postes = pd.read_csv("postes_filtrados.csv")
+            for _, poste in df_postes.iterrows():
+                folium.CircleMarker(
+                    location=[poste["Latitude"], poste["Longitude"]],
+                    radius=3,
+                    color="orange",
+                    fill=True,
+                    fill_opacity=0.7,
+                    popup="Poste Próximo à Rota"
+                ).add_to(marcadores)
+
+
     mapa.save(caminho_html)
     return caminho_html
 
@@ -234,3 +245,37 @@ def gerar_kmz_unico(nome_base, rotas_info):
     kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
     kml.savekmz(kml_path)
     return kml_path
+
+def filtrar_postes_proximos_rota(df_postes, rota_coords, tolerancia_m=25):
+    linha_rota = LineString(rota_coords)  # OSRM coords: (lon, lat)
+    postes_proximos = []
+
+    for _, row in df_postes.iterrows():
+        ponto_poste = Point(row['Longitude'], row['Latitude'])  # (lon, lat)
+        distancia_m = linha_rota.distance(ponto_poste) * 111139  # grau → metros
+        if distancia_m <= tolerancia_m:
+            postes_proximos.append({
+                "Latitude": row["Latitude"],
+                "Longitude": row["Longitude"]
+            })
+
+    return postes_proximos
+
+def calcular_rota_via_postes(coord_caixa, coord_ponto, postes_ordenados):
+    waypoints = [coord_caixa] + postes_ordenados + [coord_ponto]
+    coordenadas_str = ';'.join([f"{lon},{lat}" for lat, lon in waypoints])
+
+    url = (
+        f"https://router.project-osrm.org/route/v1/driving/{coordenadas_str}"
+        f"?overview=full&geometries=geojson"
+    )
+
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        rota_coords = data['routes'][0]['geometry']['coordinates']
+        distancia_total = data['routes'][0]['distance']
+        return rota_coords, distancia_total
+    except Exception as e:
+        print(f"Erro ao calcular rota com postes: {e}")
+        return [], 0
