@@ -110,7 +110,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
                 caixa_proxima = caixa
 
         coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
-        rota_coords, distancia_real = calcular_rota_osrm(coord_ponto, coord_caixa_proxima)
+        rota_coords, distancia_real = calcular_rota_osrm(coord_caixa_proxima, coord_ponto)
         if not rota_coords:
             distancia_real = menor_dist_geodesica
 
@@ -166,7 +166,7 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
 
-        rota_coords, _ = calcular_rota_osrm((lat_ponto, lon_ponto), (lat_caixa, lon_caixa))
+        rota_coords, _ = calcular_rota_osrm((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
         if rota_coords:
             rota_convertida = [(lat, lon) for lon, lat in rota_coords]
             folium.PolyLine(
