@@ -146,7 +146,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
             'Categoria': caixa_proxima['Pasta'],
             'Distância da Rota (m)': distancia_metros,
             'Tipo de Cabo': tipo_cabo,
-            'Viabilidade': 'Conectável' if distancia_metros < limite_fibra else '',
+            'Viabilidade': 'Viável' if distancia_metros < limite_fibra else '',
             'Download da Rota (KMZ)': kmz_path
         })
 
