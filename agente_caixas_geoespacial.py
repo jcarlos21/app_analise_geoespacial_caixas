@@ -111,8 +111,13 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
 
         coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
         rota_coords, distancia_real = calcular_rota_osrm(coord_caixa_proxima, coord_ponto)
+
+        # Mover a atribuição de distancia_metros e tipo_cabo para cá
         if not rota_coords:
             distancia_real = menor_dist_geodesica
+
+        distancia_metros = round(distancia_real, 2)
+        tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
 
         ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
         caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
@@ -125,14 +130,13 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350):
                 "ponto_coords": ponto_coords,
                 "nome_ponto": nome_ponto if nome_ponto else f"Ponto {index+1}",
                 "caixa_coords": caixa_coords,
-                "nome_caixa": nome_caixa
+                "nome_caixa": nome_caixa,
+                "viabilidade": 'Viável' if distancia_metros < limite_fibra else '',
+                "tipo_cabo": tipo_cabo
             })
             kmz_path = "[Gerado em KMZ único]"
         else:
             kmz_path = ""
-
-        distancia_metros = round(distancia_real, 2)
-        tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
 
         resultados.append({
             'Nome do Ponto de Referência': nome_ponto,
@@ -205,20 +209,35 @@ def gerar_kmz_unico(nome_base, rotas_info):
         nome_ponto = item["nome_ponto"]
         caixa_coords = item["caixa_coords"]
         nome_caixa = item["nome_caixa"]
+        viabilidade = item.get("viabilidade", "")
+        tipo_cabo = item.get("tipo_cabo", "")
 
-        # Linha
+        # Cor da linha da rota
+        if viabilidade != "Viável":
+            cor_linha = simplekml.Color.red
+        elif tipo_cabo == "Drop":
+            cor_linha = simplekml.Color.rgb(0, 0, 255)  # azul
+        elif tipo_cabo == "Auto Sustentado":
+            cor_linha = simplekml.Color.rgb(0, 255, 0) # verde
+        else:
+            cor_linha = simplekml.Color.gray  # fallback
+
+        # Linha da rota
         linha = kml.newlinestring(name=f"Rota - {nome_ponto}")
         linha.coords = rota_coords
-        linha.style.linestyle.color = simplekml.Color.red
+        linha.style.linestyle.color = cor_linha
         linha.style.linestyle.width = 4
 
-        # Ponto
+        # Cor do marcador do ponto consultado
+        cor_marcador = "ltblu-pushpin.png" if viabilidade == "Viável" else "ylw-pushpin.png"
+
+        # Ponto consultado
         ponto_ref = kml.newpoint(
             name=nome_ponto,
             coords=[ponto_consultado],
             description=f"Localização consultada: {ponto_consultado}",
         )
-        ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
+        ponto_ref.style.iconstyle.icon.href = f"http://maps.google.com/mapfiles/kml/pushpin/{cor_marcador}"
 
         # Caixa
         caixa_ponto = kml.newpoint(
