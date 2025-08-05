@@ -212,18 +212,21 @@ def gerar_kmz_unico(nome_base, rotas_info):
         viabilidade = item.get("viabilidade", "")
         tipo_cabo = item.get("tipo_cabo", "")
 
+        # Criar pasta para o ponto
+        pasta = kml.newfolder(name=nome_ponto)
+
         # Cor da linha da rota
         if viabilidade != "Viável":
             cor_linha = simplekml.Color.red
         elif tipo_cabo == "Drop":
-            cor_linha = simplekml.Color.rgb(0, 0, 255)  # azul
+            cor_linha = simplekml.Color.rgb(0, 0, 139)  # azul marinho
         elif tipo_cabo == "Auto Sustentado":
-            cor_linha = simplekml.Color.rgb(0, 255, 0) # verde
+            cor_linha = simplekml.Color.green
         else:
-            cor_linha = simplekml.Color.gray  # fallback
+            cor_linha = simplekml.Color.gray
 
-        # Linha da rota
-        linha = kml.newlinestring(name=f"Rota - {nome_ponto}")
+        # Linha da rota dentro da pasta
+        linha = pasta.newlinestring(name=f"Rota - {nome_ponto}")
         linha.coords = rota_coords
         linha.style.linestyle.color = cor_linha
         linha.style.linestyle.width = 4
@@ -231,16 +234,16 @@ def gerar_kmz_unico(nome_base, rotas_info):
         # Cor do marcador do ponto consultado
         cor_marcador = "ltblu-pushpin.png" if viabilidade == "Viável" else "ylw-pushpin.png"
 
-        # Ponto consultado
-        ponto_ref = kml.newpoint(
+        # Ponto consultado dentro da pasta
+        ponto_ref = pasta.newpoint(
             name=nome_ponto,
             coords=[ponto_consultado],
             description=f"Localização consultada: {ponto_consultado}",
         )
         ponto_ref.style.iconstyle.icon.href = f"http://maps.google.com/mapfiles/kml/pushpin/{cor_marcador}"
 
-        # Caixa
-        caixa_ponto = kml.newpoint(
+        # Caixa dentro da pasta
+        caixa_ponto = pasta.newpoint(
             name=nome_caixa,
             coords=[caixa_coords],
             description=f"Coordenadas: {caixa_coords}",
