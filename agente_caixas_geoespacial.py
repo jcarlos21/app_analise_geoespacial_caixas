@@ -219,9 +219,9 @@ def gerar_kmz_unico(nome_base, rotas_info):
         if viabilidade != "Viável":
             cor_linha = simplekml.Color.red
         elif tipo_cabo == "Drop":
-            cor_linha = simplekml.Color.rgb(0, 0, 139)  # azul marinho
+            cor_linha = simplekml.Color.rgb(0, 0, 255)  # azul marinho
         elif tipo_cabo == "Auto Sustentado":
-            cor_linha = simplekml.Color.green
+            cor_linha = simplekml.Color.rgb(0, 255, 0)
         else:
             cor_linha = simplekml.Color.gray
 
