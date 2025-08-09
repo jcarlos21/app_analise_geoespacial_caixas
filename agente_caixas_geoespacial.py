@@ -256,3 +256,4 @@ def gerar_kmz_unico(nome_base, rotas_info):
     kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
     kml.savekmz(kml_path)
     return kml_path
+
