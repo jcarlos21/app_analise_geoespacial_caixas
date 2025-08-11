@@ -15,7 +15,7 @@ st.title("📍 Análise Geoespacial de Caixas de Emenda")
 st.markdown("Envie os arquivos ou informe uma localização para identificar a caixa de emenda óptica mais próxima.")
 
 caixas_file = st.file_uploader("🛠️ Arquivo de Caixas de Emenda (Excel)", type=[".xlsx"])
-limite = st.slider("Limite de Distância para Viabilidade (m)", 50, 1000, 350, 50)
+limite = st.slider("Limite de Distância para Viabilidade (m)", 50, 1000, 500, 25)
 
 # === POSTES (opcional) ===
 st.markdown("### 🌲 Postes (opcional)")
