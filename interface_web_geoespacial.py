@@ -93,23 +93,17 @@ if caixas_file:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
             mapa_path = tmp.name
 
-            # Se NÃO for usar postes, mantém comportamento original
             if not (usar_postes and df_postes is not None and buffer_postes_m):
                 gerar_mapa_interativo(df_resultado, mapa_path)
             else:
-                # Reconstrói um mapa customizado para poder sobrepor a rota por postes
                 m = folium.Map(location=[-5.8, -36.6], zoom_start=8)
                 for _, linha in df_resultado.iterrows():
                     lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
                     lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
-
-                    # Rota OSRM
                     rota_coords_osrm, _ = calcular_rota_osrm((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
                     if rota_coords_osrm:
                         rota_convertida = [(lat, lon) for lon, lat in rota_coords_osrm]
                         folium.PolyLine(locations=rota_convertida, color='red', weight=4, tooltip=f"Rota OSRM: {linha['Distância da Rota (m)']} metros.").add_to(m)
-
-                        # Rota por Postes (tracejada)
                         try:
                             rota_postes, dist_postes = gerar_rota_por_postes(
                                 rota_coords_osrm, df_postes, buffer_m=float(buffer_postes_m),
@@ -123,14 +117,12 @@ if caixas_file:
                                 ).add_to(m)
                         except Exception as e:
                             st.warning(f"Falha ao desenhar rota por postes para {linha.get('Nome do Ponto de Referência','')}: {e}")
-
                     else:
                         folium.PolyLine(
                             locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
                             weight=2, dash_array="5,5", tooltip="Rota linear (falha OSRM)"
                         ).add_to(m)
 
-                    # Marcadores
                     folium.Marker([lat_ponto, lon_ponto], tooltip=f"{linha['Nome do Ponto de Referência']}", icon=folium.Icon(color='blue', icon='info-sign')).add_to(m)
                     folium.Marker([lat_caixa, lon_caixa], tooltip=f"{linha['Identificador']}", icon=folium.Icon(color='green', icon='hdd', prefix='fa')).add_to(m)
 
