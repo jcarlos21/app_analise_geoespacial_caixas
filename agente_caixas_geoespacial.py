@@ -120,9 +120,9 @@ def gerar_rota_por_postes(
     frac_inicial=0.2,           # ~20% iniciais p/ detectar lado dominante
     angulo_max=60.0,            # deg
     delta_s_min=10.0,           # m (ganho mínimo de progresso p/ aceitar virada grande)
-    salto_lateral_max=0.0,     # m (entre consecutivos)
+    salto_lateral_max=0.0,      # m (entre consecutivos)
     espacamento_min=0,          # m (thinning)
-    dp_tol=0,                 # m (Douglas-Peucker)
+    dp_tol=0,                   # m (Douglas-Peucker)
     gap_s=70.0                  # m (costura temporária com lado oposto)
 ):
     """
