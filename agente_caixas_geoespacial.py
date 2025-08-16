@@ -58,7 +58,7 @@ def calcular_rota_osrm(coord_origem, coord_destino):
 
         return rota_coords, distancia_total_real
     except Exception as e:
-        print(f"Erro ao calcular rota OSRM: {e}")
+        print(f"[OSRM] Erro ao calcular rota: {e}. Verifique conectividade e formato das coordenadas.")
         return [], 0
 
 # ---------- Funções auxiliares p/ 3 camadas ----------
@@ -115,10 +115,8 @@ def gerar_rota_por_postes(
     lat_col = lower_map.get('latitude') or lower_map.get('lat') or lower_map.get('y')
     lon_col = lower_map.get('longitude') or lower_map.get('lon') or lower_map.get('x')
     if lat_col is None or lon_col is None:
-        if 'LATITUDE' in df_postes.columns and 'LONGITUDE' in df_postes.columns:
-            lat_col, lon_col = 'LATITUDE', 'LONGITUDE'
-        else:
-            return [], 0.0
+        print("[POSTES] Colunas de latitude/longitude não foram encontradas no arquivo de postes.")
+        return [], 0.0
 
     # Ponto médio para escolher UTM local
     mid_idx = len(rota_coords_osrm) // 2
@@ -190,7 +188,7 @@ def gerar_rota_por_postes(
                 base_arr = np.vstack([base_arr, candidatos])
         base_arr = base_arr[base_arr[:, 0].argsort()]
 
-    # ---------- 2) Regras anti‑serrilha ----------
+    # ---------- 2) Regras anti-serrilha ----------
     seq = base_arr.tolist()
 
     def _filtra_angulos(seq_pts, ang_max=60.0, ds_min=10.0):
@@ -380,7 +378,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350, df_p
                     coord_caixa=coord_caixa_proxima, coord_ponto=coord_ponto
                 )
             except Exception as e:
-                print(f"[Postes] Falha ao gerar rota por postes: {e}")
+                print(f"[POSTES] Falha ao gerar rota por postes: {e}")
 
         if rota_coords:
             rotas_para_kmz_unico.append({
