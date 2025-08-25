@@ -32,7 +32,7 @@ def calcular_rota_osrm(coord_origem, coord_destino):
     lat1, lon1 = coord_origem  # caixa
     lat2, lon2 = coord_destino  # ponto consultado
     url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
+        f"https://router.project-osrm.org/route/v1/foot/"
         f"{lon1},{lat1};{lon2},{lat2}"
         f"?overview=full&geometries=geojson"
     )
