@@ -68,7 +68,7 @@ caixas_file = st.file_uploader("🛠️ Arquivo de Caixas de Emenda (Excel)", ty
 limite = st.slider("Limite de Distância para Viabilidade (m)", 50, 1000, 500, 25)
 
 # === NOVO: Top-K de caixas a testar ===
-k_top = st.slider("Número de caixas a testar (Top-K)", min_value=1, max_value=20, value=5, step=1)
+k_top = st.slider("Número de caixas a testar (Top-K)", min_value=1, max_value=5, value=3, step=1)
 st.caption("⚠️ Use com cautela: quanto maior o Top-K, **mais lento** será o processamento e **maior** será o uso da API de rotas.")
 
 # === POSTES (opcional) ===

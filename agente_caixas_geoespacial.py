@@ -371,7 +371,7 @@ def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def analisar_distancia_entre_pontos(
     df_pontos, df_caixas, limite_fibra=350, df_postes=None, buffer_postes_m=None,
-    usar_postes=False, k_top=5  # <<=== mantém Top-K configurável
+    usar_postes=False, k_top=3  # <<=== mantém Top-K configurável
 ):
     # normaliza df_pontos (como já fazia)
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
