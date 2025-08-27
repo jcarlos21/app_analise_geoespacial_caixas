@@ -34,13 +34,20 @@ def calcular_rota_osrm(coord_origem, coord_destino):
     url = (
         f"https://router.project-osrm.org/route/v1/foot/"
         f"{lon1},{lat1};{lon2},{lat2}"
-        f"?overview=full&geometries=geojson"
+        f"?overview=full&geometries=geojson&alternatives=true&steps=false"
     )
     try:
         resp = requests.get(url)
         data = resp.json()
-        rota_coords = data['routes'][0]['geometry']['coordinates']
-        distancia_urbana = data['routes'][0]['distance']
+
+        # === MELHORIA #1: escolher a melhor entre alternativas ===
+        rotas = data.get('routes', [])
+        if not rotas:
+            raise ValueError("Nenhuma rota retornada pelo OSRM.")
+
+        melhor = min(rotas, key=lambda r: r.get('distance', float('inf')))
+        rota_coords = melhor['geometry']['coordinates']
+        distancia_urbana = melhor['distance']
 
         ponto_inicial_osrm = rota_coords[0]
         ponto_final_osrm = rota_coords[-1]
@@ -53,6 +60,7 @@ def calcular_rota_osrm(coord_origem, coord_destino):
 
         distancia_total_real = distancia_inicial + distancia_urbana + distancia_final
 
+        # Garante pontas reais (caixa e ponto)
         rota_coords.insert(0, [lon1, lat1])  # caixa real
         rota_coords.append([lon2, lat2])     # ponto real
 
@@ -60,6 +68,26 @@ def calcular_rota_osrm(coord_origem, coord_destino):
     except Exception as e:
         print(f"[OSRM] Erro ao calcular rota: {e}. Verifique conectividade e formato das coordenadas.")
         return [], 0
+
+# === NOVO: OSRM bidirecional (A→B e B→A; escolhe a menor) ===
+def calcular_rota_osrm_bidir(coord_a, coord_b):
+    """
+    Calcula rota A→B e B→A usando calcular_rota_osrm (com alternatives=true)
+    e retorna a menor. Se a menor vier como B→A, a geometria é revertida
+    para manter a orientação A→B no restante do pipeline.
+    """
+    rota_ab, dist_ab = calcular_rota_osrm(coord_a, coord_b)
+    rota_ba, dist_ba = calcular_rota_osrm(coord_b, coord_a)
+
+    if not rota_ab and not rota_ba:
+        return [], 0
+
+    if rota_ab and (not rota_ba or dist_ab <= dist_ba):
+        return rota_ab, dist_ab
+
+    # Melhor foi B→A: reorienta para A→B
+    rota_ba_reorientada = list(reversed(rota_ba))
+    return rota_ba_reorientada, dist_ba
 
 # ---------- Funções auxiliares p/ 3 camadas ----------
 def _unit(vx, vy):
@@ -105,7 +133,10 @@ def gerar_rota_por_postes(
     salto_lateral_max=0.0,
     espacamento_min=0,
     dp_tol=0,
-    gap_s=70.0
+    gap_s=70.0,
+    # === MELHORIA #2: parâmetros do corredor híbrido ===
+    modo_corredor="uniao",     # "osrm", "reta" ou "uniao"
+    buffer_reta_m=None         # se None, usa buffer_m
 ):
     if not rota_coords_osrm:
         return [], 0.0
@@ -125,8 +156,25 @@ def gerar_rota_por_postes(
     epsg = _utm_epsg_from_latlon(ref_lat, ref_lon)
 
     # Projeta rota OSRM para UTM e cria buffer
-    line_utm = LineString([to_utm.transform(lon, lat) for lon, lat in rota_coords_osrm])
-    buffer_utm = line_utm.buffer(buffer_m)
+    line_osrm_utm = LineString([to_utm.transform(lon, lat) for lon, lat in rota_coords_osrm])
+    buf_osrm = line_osrm_utm.buffer(buffer_m)
+
+    # === MELHORIA #2: linha reta e união de buffers ===
+    if coord_caixa is not None and coord_ponto is not None:
+        pA = to_utm.transform(coord_caixa[1], coord_caixa[0])
+        pB = to_utm.transform(coord_ponto[1], coord_ponto[0])
+        line_reta_utm = LineString([pA, pB])
+        buf_reta = line_reta_utm.buffer(buffer_reta_m or buffer_m)
+    else:
+        line_reta_utm = None
+        buf_reta = None
+
+    if modo_corredor == "osrm":
+        corredor_utm = buf_osrm
+    elif modo_corredor == "reta" and buf_reta is not None:
+        corredor_utm = buf_reta
+    else:  # "uniao" (padrão)
+        corredor_utm = buf_osrm.union(buf_reta) if buf_reta is not None else buf_osrm
 
     # GDF de postes em WGS84 -> reprojeta p/ UTM
     gdf_postes = gpd.GeoDataFrame(
@@ -135,8 +183,8 @@ def gerar_rota_por_postes(
         crs="EPSG:4326",
     ).to_crs(f"EPSG:{epsg}")
 
-    # Seleciona postes dentro do buffer
-    postes_no_corredor = gdf_postes[gdf_postes.geometry.within(buffer_utm)]
+    # Seleciona postes dentro do corredor (antes era apenas buffer da OSRM)
+    postes_no_corredor = gdf_postes[gdf_postes.geometry.within(corredor_utm)]
     if postes_no_corredor.empty:
         coords_full_utm = []
         if coord_caixa is not None:
@@ -155,7 +203,7 @@ def gerar_rota_por_postes(
     rows = []
     for _, r in postes_no_corredor.iterrows():
         p = r.geometry
-        s, d, d_signed = _signed_offset(line_utm, p)
+        s, d, d_signed = _signed_offset(line_osrm_utm, p)
         rows.append((s, d, d_signed, p.x, p.y))
     arr = np.array(rows)  # colunas: s, d, d_signed, x, y
     arr = arr[arr[:, 0].argsort()]
@@ -321,7 +369,10 @@ def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
             raise KeyError(f"Coluna obrigatória ausente no arquivo de caixas: '{req}'.")
     return df2
 
-def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350, df_postes=None, buffer_postes_m=None, usar_postes=False):
+def analisar_distancia_entre_pontos(
+    df_pontos, df_caixas, limite_fibra=350, df_postes=None, buffer_postes_m=None,
+    usar_postes=False, k_top=5  # <<=== mantém Top-K configurável
+):
     # normaliza df_pontos (como já fazia)
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
     df_pontos.rename(columns={
@@ -341,25 +392,49 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350, df_p
     if df_caixas.empty:
         return pd.DataFrame([])
 
+    K_TOP = max(1, int(k_top))  # garante valor mínimo 1
+
     for index, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
 
-        menor_dist_geodesica = float('inf')
-        caixa_proxima = None
-        for _, caixa in df_caixas.iterrows():
-            coord_caixa = (caixa['Latitude'], caixa['Longitude'])
-            dist_geo = geodesic(coord_ponto, coord_caixa).meters
-            if dist_geo < menor_dist_geodesica:
-                menor_dist_geodesica = dist_geo
-                caixa_proxima = caixa
+        # --- Pré-seleção por geodésica: pega as K caixas mais próximas
+        def _dist_geo_row(row):
+            return geodesic(coord_ponto, (row['Latitude'], row['Longitude'])).meters
 
-        if caixa_proxima is None:
+        df_tmp = df_caixas.copy()
+        df_tmp['__dist_geo__'] = df_tmp.apply(_dist_geo_row, axis=1)
+        candidatas = df_tmp.nsmallest(K_TOP, '__dist_geo__')
+
+        # --- Entre as K candidatas, escolhe a menor rota real (OSRM) usando BIDIR
+        melhor = None
+        for _, cand in candidatas.iterrows():
+            coord_caixa_cand = (cand['Latitude'], cand['Longitude'])
+
+            # >>> alteração: usa cálculo bidirecional
+            rota_coords_cand, distancia_real_cand = calcular_rota_osrm_bidir(coord_caixa_cand, coord_ponto)
+
+            if not rota_coords_cand:
+                # fallback: usa geodésica dessa candidata
+                distancia_real_cand = cand['__dist_geo__']
+
+            if (melhor is None) or (distancia_real_cand < melhor['dist']):
+                melhor = {
+                    'caixa': cand,
+                    'rota': rota_coords_cand,
+                    'dist': distancia_real_cand
+                }
+
+        if melhor is None:
             continue
 
+        caixa_proxima = melhor['caixa']
         coord_caixa_proxima = (caixa_proxima['Latitude'], caixa_proxima['Longitude'])
-        rota_coords, distancia_real = calcular_rota_osrm(coord_caixa_proxima, coord_ponto)
+        rota_coords = melhor['rota']
+        distancia_real = melhor['dist']
+
+        # Se por algum motivo a rota não veio, usa geodésica
         if not rota_coords:
-            distancia_real = menor_dist_geodesica
+            distancia_real = geodesic(coord_ponto, coord_caixa_proxima).meters
 
         distancia_metros = round(distancia_real, 2)
         tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
@@ -373,6 +448,7 @@ def analisar_distancia_entre_pontos(df_pontos, df_caixas, limite_fibra=350, df_p
         dist_postes_m = None
         if usar_postes and rota_coords and df_postes is not None and buffer_postes_m:
             try:
+                # MELHORIA #2 já aplicada dentro da função (corredor híbrido)
                 rota_postes_coords, dist_postes_m = gerar_rota_por_postes(
                     rota_coords, df_postes, buffer_m=float(buffer_postes_m),
                     coord_caixa=coord_caixa_proxima, coord_ponto=coord_ponto
@@ -430,7 +506,8 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
 
-        rota_coords, _ = calcular_rota_osrm((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
+        # >>> alteração: usa cálculo bidirecional também no mapa
+        rota_coords, _ = calcular_rota_osrm_bidir((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
         if rota_coords:
             rota_convertida = [(lat, lon) for lon, lat in rota_coords]
             folium.PolyLine(

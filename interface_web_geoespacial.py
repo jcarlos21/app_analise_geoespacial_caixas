@@ -67,6 +67,10 @@ Se tiver dúvidas sobre o preparo dos arquivos, me diga como estão seus dados q
 caixas_file = st.file_uploader("🛠️ Arquivo de Caixas de Emenda (Excel)", type=[".xlsx"])
 limite = st.slider("Limite de Distância para Viabilidade (m)", 50, 1000, 500, 25)
 
+# === NOVO: Top-K de caixas a testar ===
+k_top = st.slider("Número de caixas a testar (Top-K)", min_value=1, max_value=20, value=5, step=1)
+st.caption("⚠️ Use com cautela: quanto maior o Top-K, **mais lento** será o processamento e **maior** será o uso da API de rotas.")
+
 # === POSTES (opcional) ===
 st.markdown("### 🌲 Postes (opcional)")
 usar_postes = st.checkbox("Considerar postes para refinar a rota", value=False)
@@ -123,7 +127,8 @@ if caixas_file:
                     try:
                         df_resultado = analisar_distancia_entre_pontos(
                             df_pontos, df_caixas_filtrado, limite,
-                            df_postes=df_postes, buffer_postes_m=buffer_postes_m, usar_postes=usar_postes
+                            df_postes=df_postes, buffer_postes_m=buffer_postes_m,
+                            usar_postes=usar_postes, k_top=k_top   # <<=== passa Top-K
                         )
                     except KeyError as e:
                         # Falhas de colunas obrigatórias são levantadas pelo _normalize_caixas_df
@@ -160,7 +165,8 @@ if caixas_file:
                 try:
                     df_resultado = analisar_distancia_entre_pontos(
                         df_pontos, df_caixas_filtrado, limite,
-                        df_postes=df_postes, buffer_postes_m=buffer_postes_m, usar_postes=usar_postes
+                        df_postes=df_postes, buffer_postes_m=buffer_postes_m,
+                        usar_postes=usar_postes, k_top=k_top   # <<=== passa Top-K
                     )
                 except KeyError as e:
                     st.error(f"⚠️ Problema de colunas obrigatórias no arquivo de Caixas: {e}. "
