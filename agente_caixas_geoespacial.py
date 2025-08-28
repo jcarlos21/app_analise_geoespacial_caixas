@@ -69,7 +69,7 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         print(f"[OSRM] Erro ao calcular rota: {e}. Verifique conectividade e formato das coordenadas.")
         return [], 0
 
-# === NOVO: OSRM bidirecional (A→B e B→A; escolhe a menor) ===
+# === OSRM bidirecional (A→B e B→A; escolhe a menor) ===
 def calcular_rota_osrm_bidir(coord_a, coord_b):
     """
     Calcula rota A→B e B→A usando calcular_rota_osrm (com alternatives=true)
@@ -340,7 +340,7 @@ def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caix
     kml.savekmz(kml_path)
     return kml_path
 
-# --------- NOVO: normalização robusta do df_caixas ---------
+# --------- normalização robusta do df_caixas ---------
 def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
     cols = {c.lower().strip(): c for c in df.columns}
     def pick(*names):
@@ -371,7 +371,7 @@ def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def analisar_distancia_entre_pontos(
     df_pontos, df_caixas, limite_fibra=350, df_postes=None, buffer_postes_m=None,
-    usar_postes=False, k_top=3  # <<=== mantém Top-K configurável
+    usar_postes=False, k_top=3, progress_cb=None  # progress_cb opcional
 ):
     # normaliza df_pontos (como já fazia)
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
@@ -383,16 +383,18 @@ def analisar_distancia_entre_pontos(
         'LONGITUDE': 'LONGITUDE'
     }, inplace=True)
 
-    # ✅ normaliza df_caixas (novo)
+    # normaliza df_caixas
     df_caixas = _normalize_caixas_df(df_caixas)
 
     resultados = []
-    rotas_para_kmz_unico = []
 
     if df_caixas.empty:
         return pd.DataFrame([])
 
     K_TOP = max(1, int(k_top))  # garante valor mínimo 1
+
+    total_pontos = len(df_pontos)
+    processados = 0
 
     for index, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
@@ -410,7 +412,6 @@ def analisar_distancia_entre_pontos(
         for _, cand in candidatas.iterrows():
             coord_caixa_cand = (cand['Latitude'], cand['Longitude'])
 
-            # >>> alteração: usa cálculo bidirecional
             rota_coords_cand, distancia_real_cand = calcular_rota_osrm_bidir(coord_caixa_cand, coord_ponto)
 
             if not rota_coords_cand:
@@ -425,6 +426,9 @@ def analisar_distancia_entre_pontos(
                 }
 
         if melhor is None:
+            processados += 1
+            if progress_cb:
+                progress_cb(processados, total_pontos)
             continue
 
         caixa_proxima = melhor['caixa']
@@ -448,29 +452,13 @@ def analisar_distancia_entre_pontos(
         dist_postes_m = None
         if usar_postes and rota_coords and df_postes is not None and buffer_postes_m:
             try:
-                # MELHORIA #2 já aplicada dentro da função (corredor híbrido)
+                # Corredor híbrido já aplicado dentro da função
                 rota_postes_coords, dist_postes_m = gerar_rota_por_postes(
                     rota_coords, df_postes, buffer_m=float(buffer_postes_m),
                     coord_caixa=coord_caixa_proxima, coord_ponto=coord_ponto
                 )
             except Exception as e:
                 print(f"[POSTES] Falha ao gerar rota por postes: {e}")
-
-        if rota_coords:
-            rotas_para_kmz_unico.append({
-                "rota_coords": rota_coords,
-                "ponto_coords": ponto_coords,
-                "nome_ponto": nome_ponto if nome_ponto else f"Ponto {index+1}",
-                "caixa_coords": caixa_coords,
-                "nome_caixa": nome_caixa,
-                "viabilidade": 'Viável' if distancia_metros < limite_fibra else '',
-                "tipo_cabo": tipo_cabo,
-                "rota_postes_coords": rota_postes_coords,
-                "dist_postes_m": dist_postes_m
-            })
-            kmz_path = "[Gerado em KMZ único]"
-        else:
-            kmz_path = ""
 
         resultados.append({
             'Nome do Ponto de Referência': nome_ponto,
@@ -487,14 +475,40 @@ def analisar_distancia_entre_pontos(
             'Viabilidade': 'Viável' if distancia_metros < limite_fibra else '',
             'Distância via Postes (m)': round(dist_postes_m, 2) if dist_postes_m else None,
             'Rota via Postes?': 'Sim' if rota_postes_coords else 'Não',
-            'Download da Rota (KMZ)': kmz_path
+            # >>> NOVO: guardar as coordenadas e distância dos postes para o KMZ
+            'rota_postes_coords': rota_postes_coords,
+            'dist_postes_m': dist_postes_m,
+            'Download da Rota (KMZ)': "[Gerado em KMZ único]" if rota_coords else ""
         })
 
-    if rotas_para_kmz_unico:
+        processados += 1
+        if progress_cb:
+            progress_cb(processados, total_pontos)
+
+    # --- Gera o KMZ único com as rotas e (agora) com os postes disponíveis
+    if resultados:
         nome_arquivo_unico = "rotas_completas"
-        kmz_unico_path = gerar_kmz_unico(nome_arquivo_unico, rotas_para_kmz_unico)
-        for resultado in resultados:
-            resultado["Download da Rota (KMZ)"] = kmz_unico_path
+        rotas_info = []
+        for l in resultados:
+            # Recalcula/garante a rota OSRM bidir para o KMZ (mantém comportamento anterior)
+            lat_cx, lon_cx = map(float, l['Localização da Caixa'].split(', '))
+            lat_pt, lon_pt = map(float, l['Localização do Ponto'].split(', '))
+            rota_osrm_coords, _ = calcular_rota_osrm_bidir((lat_cx, lon_cx), (lat_pt, lon_pt))
+            rotas_info.append({
+                "rota_coords": rota_osrm_coords,
+                "ponto_coords": (lon_pt, lat_pt),
+                "nome_ponto": l['Nome do Ponto de Referência'] if l['Nome do Ponto de Referência'] else "Ponto",
+                "caixa_coords": (lon_cx, lat_cx),
+                "nome_caixa": l['Identificador'],
+                "viabilidade": l['Viabilidade'],
+                "tipo_cabo": l['Tipo de Cabo'],
+                # >>> NOVO: envia os postes para o KMZ
+                "rota_postes_coords": l.get('rota_postes_coords') or [],
+                "dist_postes_m": l.get('dist_postes_m'),
+            })
+        kmz_unico_path = gerar_kmz_unico(nome_arquivo_unico, rotas_info)
+        for r in resultados:
+            r["Download da Rota (KMZ)"] = kmz_unico_path
 
     return pd.DataFrame(resultados)
 
@@ -506,7 +520,7 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
 
-        # >>> alteração: usa cálculo bidirecional também no mapa
+        # usa cálculo bidirecional também no mapa
         rota_coords, _ = calcular_rota_osrm_bidir((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
         if rota_coords:
             rota_convertida = [(lat, lon) for lon, lat in rota_coords]
@@ -515,16 +529,6 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
                 color='red', weight=4,
                 tooltip=f"Rota OSRM: {linha['Distância da Rota (m)']} metros."
             ).add_to(mapa)
-
-            if linha.get('Rota via Postes?') == 'Sim' and linha.get('Distância via Postes (m)'):
-                rota_postes_coords = linha.get('rota_postes_coords', [])
-                if rota_postes_coords:
-                    rota_postes_convertida = [(lat, lon) for lon, lat in rota_postes_coords]
-                    folium.PolyLine(
-                        locations=rota_postes_convertida,
-                        color='blue', weight=4,
-                        tooltip=f"Rota Via Postes: {linha['Distância via Postes (m)']} metros"
-                    ).add_to(mapa)
         else:
             folium.PolyLine(
                 locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
@@ -571,35 +575,38 @@ def gerar_kmz_unico(nome_base, rotas_info):
         else:
             cor_linha = simplekml.Color.gray
 
-        linha = pasta.newlinestring(name=f"Rota OSRM - {nome_ponto}")
-        linha.coords = rota_coords
-        linha.style.linestyle.color = cor_linha
-        linha.style.linestyle.width = 4
+        # Rota OSRM
+        if rota_coords:
+            linha = pasta.newlinestring(name=f"Rota OSRM - {nome_ponto}")
+            linha.coords = rota_coords
+            linha.style.linestyle.color = cor_linha
+            linha.style.linestyle.width = 4
 
+        # >>> NOVO: marcadores dos POSTES com o ícone solicitado
         if rota_postes_coords:
-            linha_postes = pasta.newlinestring(name=f"Rota por Postes - {nome_ponto}")
+            # (opcional) linha leve ligando os postes
+            linha_postes = pasta.newlinestring(name=f"Trajeto por Postes - {nome_ponto}")
             linha_postes.coords = rota_postes_coords
-            for idx, (lon, lat) in enumerate(rota_postes_coords):
-                if idx == 0 or idx == len(rota_postes_coords)-1:
-                    continue
-                p_poste = pasta.newpoint(coords=[(lon, lat)])
-                p_poste.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
-                p_poste.style.iconstyle.scale = 0.8
-            linha_postes.style.linestyle.color = simplekml.Color.changealphaint(180, simplekml.Color.cyan)
-            linha_postes.style.linestyle.width = 4
+            linha_postes.style.linestyle.color = simplekml.Color.changealphaint(160, simplekml.Color.cyan)
+            linha_postes.style.linestyle.width = 3
             if dist_postes_m:
                 linha_postes.description = f"Rota por postes (~{round(dist_postes_m, 2)} m)"
-            else:
-                linha_postes.description = "Rota por postes"
 
-        cor_marcador = "ltblu-pushpin.png" if viabilidade == "Viável" else "ylw-pushpin.png"
+            for idx, (lon, lat) in enumerate(rota_postes_coords):
+                # pula início/fim se quiser enfatizar apenas os postes intermediários
+                if idx == 0 or idx == len(rota_postes_coords) - 1:
+                    continue
+                p_poste = pasta.newpoint(coords=[(lon, lat)])
+                p_poste.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/paddle/P.png"
+                p_poste.style.iconstyle.scale = 0.9
 
+        # Ponto e Caixa
         ponto_ref = pasta.newpoint(
             name=nome_ponto,
             coords=[ponto_consultado],
             description=f"Localização consultada: {ponto_consultado}",
         )
-        ponto_ref.style.iconstyle.icon.href = f"http://maps.google.com/mapfiles/kml/pushpin/{cor_marcador}"
+        ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
 
         caixa_ponto = pasta.newpoint(
             name=nome_caixa,
