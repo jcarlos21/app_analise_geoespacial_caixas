@@ -7,3 +7,8 @@ requests>=2.28.0
 openpyxl>=3.1.2
 shapely>=2.1.1
 geopandas
+numpy
+pyproj
+matplotlib
+contextily
+python-docx

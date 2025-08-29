@@ -15,6 +15,15 @@ from pyproj import Transformer
 import math
 import numpy as np
 
+# --- IMPORTS p/ print satelital + DOCX + ZIP ---
+import matplotlib.pyplot as plt
+import contextily as ctx
+from matplotlib.lines import Line2D
+import zipfile
+from docx import Document
+from docx.shared import Inches
+from datetime import datetime
+
 def _utm_epsg_from_latlon(lat, lon):
     zone = int((lon + 180) // 6) + 1
     if lat >= 0:
@@ -40,7 +49,6 @@ def calcular_rota_osrm(coord_origem, coord_destino):
         resp = requests.get(url)
         data = resp.json()
 
-        # === MELHORIA #1: escolher a melhor entre alternativas ===
         rotas = data.get('routes', [])
         if not rotas:
             raise ValueError("Nenhuma rota retornada pelo OSRM.")
@@ -66,30 +74,22 @@ def calcular_rota_osrm(coord_origem, coord_destino):
 
         return rota_coords, distancia_total_real
     except Exception as e:
-        print(f"[OSRM] Erro ao calcular rota: {e}. Verifique conectividade e formato das coordenadas.")
+        print(f"[OSRM] Erro ao calcular rota: {e}.")
         return [], 0
 
-# === OSRM bidirecional (A→B e B→A; escolhe a menor) ===
 def calcular_rota_osrm_bidir(coord_a, coord_b):
-    """
-    Calcula rota A→B e B→A usando calcular_rota_osrm (com alternatives=true)
-    e retorna a menor. Se a menor vier como B→A, a geometria é revertida
-    para manter a orientação A→B no restante do pipeline.
-    """
     rota_ab, dist_ab = calcular_rota_osrm(coord_a, coord_b)
     rota_ba, dist_ba = calcular_rota_osrm(coord_b, coord_a)
 
     if not rota_ab and not rota_ba:
         return [], 0
-
     if rota_ab and (not rota_ba or dist_ab <= dist_ba):
         return rota_ab, dist_ab
 
-    # Melhor foi B→A: reorienta para A→B
     rota_ba_reorientada = list(reversed(rota_ba))
     return rota_ba_reorientada, dist_ba
 
-# ---------- Funções auxiliares p/ 3 camadas ----------
+# ---------- Auxiliares ----------
 def _unit(vx, vy):
     n = math.hypot(vx, vy)
     if n == 0:
@@ -117,8 +117,7 @@ def _angle(p0, p1, p2):
         return 0.0
     cosang = (v1[0]*v2[0] + v1[1]*v2[1]) / (n1*n2)
     cosang = max(-1.0, min(1.0, cosang))
-    ang = math.degrees(math.acos(cosang))
-    return ang
+    return math.degrees(math.acos(cosang))
 
 def gerar_rota_por_postes(
     rota_coords_osrm,
@@ -134,12 +133,17 @@ def gerar_rota_por_postes(
     espacamento_min=0,
     dp_tol=0,
     gap_s=70.0,
-    # === MELHORIA #2: parâmetros do corredor híbrido ===
-    modo_corredor="uniao",     # "osrm", "reta" ou "uniao"
-    buffer_reta_m=None         # se None, usa buffer_m
+    modo_corredor="uniao",
+    buffer_reta_m=None
 ):
+    """
+    RETORNA: (coords_full_lonlat, distancia_m, postes_pts_lonlat)
+      - coords_full_lonlat: polilinha (lon,lat) do trajeto por postes (com caixa e ponto nas pontas)
+      - distancia_m: distância acumulada em metros
+      - postes_pts_lonlat: lista de (lon,lat) dos postes considerados (sem caixa e ponto)
+    """
     if not rota_coords_osrm:
-        return [], 0.0
+        return [], 0.0, []
 
     # Normaliza nomes de colunas de postes
     lower_map = {c.lower(): c for c in df_postes.columns}
@@ -147,7 +151,7 @@ def gerar_rota_por_postes(
     lon_col = lower_map.get('longitude') or lower_map.get('lon') or lower_map.get('x')
     if lat_col is None or lon_col is None:
         print("[POSTES] Colunas de latitude/longitude não foram encontradas no arquivo de postes.")
-        return [], 0.0
+        return [], 0.0, []
 
     # Ponto médio para escolher UTM local
     mid_idx = len(rota_coords_osrm) // 2
@@ -159,7 +163,7 @@ def gerar_rota_por_postes(
     line_osrm_utm = LineString([to_utm.transform(lon, lat) for lon, lat in rota_coords_osrm])
     buf_osrm = line_osrm_utm.buffer(buffer_m)
 
-    # === MELHORIA #2: linha reta e união de buffers ===
+    # Linha reta A-B e união (corredor)
     if coord_caixa is not None and coord_ponto is not None:
         pA = to_utm.transform(coord_caixa[1], coord_caixa[0])
         pB = to_utm.transform(coord_ponto[1], coord_ponto[0])
@@ -173,17 +177,17 @@ def gerar_rota_por_postes(
         corredor_utm = buf_osrm
     elif modo_corredor == "reta" and buf_reta is not None:
         corredor_utm = buf_reta
-    else:  # "uniao" (padrão)
+    else:
         corredor_utm = buf_osrm.union(buf_reta) if buf_reta is not None else buf_osrm
 
-    # GDF de postes em WGS84 -> reprojeta p/ UTM
+    # Postes -> UTM
     gdf_postes = gpd.GeoDataFrame(
         df_postes.copy(),
         geometry=gpd.points_from_xy(df_postes[lon_col], df_postes[lat_col]),
         crs="EPSG:4326",
     ).to_crs(f"EPSG:{epsg}")
 
-    # Seleciona postes dentro do corredor (antes era apenas buffer da OSRM)
+    # Seleciona postes dentro do corredor
     postes_no_corredor = gdf_postes[gdf_postes.geometry.within(corredor_utm)]
     if postes_no_corredor.empty:
         coords_full_utm = []
@@ -197,18 +201,18 @@ def gerar_rota_por_postes(
             x2, y2 = coords_full_utm[i]
             distancia_m += math.hypot(x2-x1, y2-y1)
         coords_full_lonlat = [to_wgs.transform(x, y) for (x, y) in coords_full_utm]
-        return coords_full_lonlat, distancia_m
+        return coords_full_lonlat, distancia_m, []
 
-    # ---------- Cálculos s, d, d_signed ----------
+    # Cálculos s, d, d_signed
     rows = []
     for _, r in postes_no_corredor.iterrows():
         p = r.geometry
         s, d, d_signed = _signed_offset(line_osrm_utm, p)
         rows.append((s, d, d_signed, p.x, p.y))
-    arr = np.array(rows)  # colunas: s, d, d_signed, x, y
+    arr = np.array(rows)
     arr = arr[arr[:, 0].argsort()]
 
-    # ---------- 1) Lado dominante ----------
+    # Lado dominante
     n = len(arr)
     n_ini = max(1, int(frac_inicial * n))
     d_signed_ini = arr[:n_ini, 2]
@@ -223,7 +227,7 @@ def gerar_rota_por_postes(
     mask_lateral = arr[:, 1] <= max_lateral
     base_arr = arr[mask_lado & mask_lateral]
 
-    # ---------- 3a) Tolerância a gaps ----------
+    # Tolerância a gaps
     if len(base_arr) >= 2:
         s_base = base_arr[:, 0]
         gaps_idx = np.where(np.diff(s_base) > gap_s)[0]
@@ -236,7 +240,7 @@ def gerar_rota_por_postes(
                 base_arr = np.vstack([base_arr, candidatos])
         base_arr = base_arr[base_arr[:, 0].argsort()]
 
-    # ---------- 2) Regras anti-serrilha ----------
+    # Regras anti-serrilha + thinning
     seq = base_arr.tolist()
 
     def _filtra_angulos(seq_pts, ang_max=60.0, ds_min=10.0):
@@ -288,11 +292,14 @@ def gerar_rota_por_postes(
     seq = _filtra_salto_lateral(seq, salto_max=salto_lateral_max, ds_min=delta_s_min)
     seq = _thinning(seq, min_s=espacamento_min)
 
+    # Coordenadas finais (trajeto) + lista de postes usados
     coords_full_utm = []
+    postes_pts_utm = []
     if coord_caixa is not None:
         coords_full_utm.append(to_utm.transform(coord_caixa[1], coord_caixa[0]))
     for s, d, dsig, x, y in seq:
         coords_full_utm.append((x, y))
+        postes_pts_utm.append((x, y))
     if coord_ponto is not None:
         coords_full_utm.append(to_utm.transform(coord_ponto[1], coord_ponto[0]))
 
@@ -308,7 +315,8 @@ def gerar_rota_por_postes(
         distancia_m += math.hypot(x2-x1, y2-y1)
 
     coords_full_lonlat = [to_wgs.transform(x, y) for (x, y) in coords_full_utm]
-    return coords_full_lonlat, distancia_m
+    postes_pts_lonlat = [to_wgs.transform(x, y) for (x, y) in postes_pts_utm]
+    return coords_full_lonlat, distancia_m, postes_pts_lonlat
 
 def gerar_kmz(nome_base, rota_coords, ponto_consultado, caixa_mais_proxima, caixa_mais_proxima_nome, nome_ponto_referencia=None):
     kml = simplekml.Kml()
@@ -363,7 +371,6 @@ def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
     if sigla: mapping[sigla] = 'Sigla'
     df2 = df.rename(columns=mapping).copy()
 
-    # validações mínimas
     for req in ['Latitude', 'Longitude']:
         if req not in df2.columns:
             raise KeyError(f"Coluna obrigatória ausente no arquivo de caixas: '{req}'.")
@@ -371,9 +378,8 @@ def _normalize_caixas_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def analisar_distancia_entre_pontos(
     df_pontos, df_caixas, limite_fibra=350, df_postes=None, buffer_postes_m=None,
-    usar_postes=False, k_top=3, progress_cb=None  # progress_cb opcional
+    usar_postes=False, k_top=3, progress_cb=None
 ):
-    # normaliza df_pontos (como já fazia)
     df_pontos.columns = df_pontos.columns.str.strip().str.upper()
     df_pontos.rename(columns={
         'NOME': 'Nome',
@@ -383,23 +389,20 @@ def analisar_distancia_entre_pontos(
         'LONGITUDE': 'LONGITUDE'
     }, inplace=True)
 
-    # normaliza df_caixas
     df_caixas = _normalize_caixas_df(df_caixas)
-
     resultados = []
 
     if df_caixas.empty:
         return pd.DataFrame([])
 
-    K_TOP = max(1, int(k_top))  # garante valor mínimo 1
+    K_TOP = max(1, int(k_top))
 
     total_pontos = len(df_pontos)
     processados = 0
 
-    for index, ponto in df_pontos.iterrows():
+    for _, ponto in df_pontos.iterrows():
         coord_ponto = (ponto['LATITUDE'], ponto['LONGITUDE'])
 
-        # --- Pré-seleção por geodésica: pega as K caixas mais próximas
         def _dist_geo_row(row):
             return geodesic(coord_ponto, (row['Latitude'], row['Longitude'])).meters
 
@@ -407,28 +410,18 @@ def analisar_distancia_entre_pontos(
         df_tmp['__dist_geo__'] = df_tmp.apply(_dist_geo_row, axis=1)
         candidatas = df_tmp.nsmallest(K_TOP, '__dist_geo__')
 
-        # --- Entre as K candidatas, escolhe a menor rota real (OSRM) usando BIDIR
         melhor = None
         for _, cand in candidatas.iterrows():
             coord_caixa_cand = (cand['Latitude'], cand['Longitude'])
-
             rota_coords_cand, distancia_real_cand = calcular_rota_osrm_bidir(coord_caixa_cand, coord_ponto)
-
             if not rota_coords_cand:
-                # fallback: usa geodésica dessa candidata
                 distancia_real_cand = cand['__dist_geo__']
-
             if (melhor is None) or (distancia_real_cand < melhor['dist']):
-                melhor = {
-                    'caixa': cand,
-                    'rota': rota_coords_cand,
-                    'dist': distancia_real_cand
-                }
+                melhor = {'caixa': cand, 'rota': rota_coords_cand, 'dist': distancia_real_cand}
 
         if melhor is None:
             processados += 1
-            if progress_cb:
-                progress_cb(processados, total_pontos)
+            if progress_cb: progress_cb(processados, total_pontos)
             continue
 
         caixa_proxima = melhor['caixa']
@@ -436,24 +429,21 @@ def analisar_distancia_entre_pontos(
         rota_coords = melhor['rota']
         distancia_real = melhor['dist']
 
-        # Se por algum motivo a rota não veio, usa geodésica
         if not rota_coords:
             distancia_real = geodesic(coord_ponto, coord_caixa_proxima).meters
 
         distancia_metros = round(distancia_real, 2)
         tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
 
-        ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
-        caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
         nome_ponto = ponto.get('Nome', '').strip() if isinstance(ponto.get('Nome', ''), str) else ''
         nome_caixa = caixa_proxima.get("Sigla", "")
 
         rota_postes_coords = []
         dist_postes_m = None
+        postes_pts_lonlat = []
         if usar_postes and rota_coords and df_postes is not None and buffer_postes_m:
             try:
-                # Corredor híbrido já aplicado dentro da função
-                rota_postes_coords, dist_postes_m = gerar_rota_por_postes(
+                rota_postes_coords, dist_postes_m, postes_pts_lonlat = gerar_rota_por_postes(
                     rota_coords, df_postes, buffer_m=float(buffer_postes_m),
                     coord_caixa=coord_caixa_proxima, coord_ponto=coord_ponto
                 )
@@ -475,22 +465,21 @@ def analisar_distancia_entre_pontos(
             'Viabilidade': 'Viável' if distancia_metros < limite_fibra else '',
             'Distância via Postes (m)': round(dist_postes_m, 2) if dist_postes_m else None,
             'Rota via Postes?': 'Sim' if rota_postes_coords else 'Não',
-            # >>> NOVO: guardar as coordenadas e distância dos postes para o KMZ
             'rota_postes_coords': rota_postes_coords,
             'dist_postes_m': dist_postes_m,
+            'postes_pts_coords': postes_pts_lonlat,     # <<< NOVO: pontos dos postes
+            'rota_osrm_coords': rota_coords or [],
             'Download da Rota (KMZ)': "[Gerado em KMZ único]" if rota_coords else ""
         })
 
         processados += 1
-        if progress_cb:
-            progress_cb(processados, total_pontos)
+        if progress_cb: progress_cb(processados, total_pontos)
 
-    # --- Gera o KMZ único com as rotas e (agora) com os postes disponíveis
+    # --- KMZ único ---
     if resultados:
         nome_arquivo_unico = "rotas_completas"
         rotas_info = []
         for l in resultados:
-            # Recalcula/garante a rota OSRM bidir para o KMZ (mantém comportamento anterior)
             lat_cx, lon_cx = map(float, l['Localização da Caixa'].split(', '))
             lat_pt, lon_pt = map(float, l['Localização do Ponto'].split(', '))
             rota_osrm_coords, _ = calcular_rota_osrm_bidir((lat_cx, lon_cx), (lat_pt, lon_pt))
@@ -502,9 +491,9 @@ def analisar_distancia_entre_pontos(
                 "nome_caixa": l['Identificador'],
                 "viabilidade": l['Viabilidade'],
                 "tipo_cabo": l['Tipo de Cabo'],
-                # >>> NOVO: envia os postes para o KMZ
                 "rota_postes_coords": l.get('rota_postes_coords') or [],
                 "dist_postes_m": l.get('dist_postes_m'),
+                "postes_pts_coords": l.get('postes_pts_coords') or []  # <<< NOVO
             })
         kmz_unico_path = gerar_kmz_unico(nome_arquivo_unico, rotas_info)
         for r in resultados:
@@ -520,33 +509,20 @@ def gerar_mapa_interativo(df_resultados, caminho_html):
         lat_ponto, lon_ponto = map(float, linha['Localização do Ponto'].split(', '))
         lat_caixa, lon_caixa = map(float, linha['Localização da Caixa'].split(', '))
 
-        # usa cálculo bidirecional também no mapa
         rota_coords, _ = calcular_rota_osrm_bidir((lat_caixa, lon_caixa), (lat_ponto, lon_ponto))
         if rota_coords:
             rota_convertida = [(lat, lon) for lon, lat in rota_coords]
-            folium.PolyLine(
-                locations=rota_convertida,
-                color='red', weight=4,
-                tooltip=f"Rota OSRM: {linha['Distância da Rota (m)']} metros."
-            ).add_to(mapa)
+            folium.PolyLine(locations=rota_convertida, color='red', weight=4).add_to(mapa)
         else:
-            folium.PolyLine(
-                locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
-                color='gray', weight=2, dash_array="5,5",
-                tooltip="Rota linear (falha OSRM)"
-            ).add_to(mapa)
+            folium.PolyLine(locations=[[lat_ponto, lon_ponto], [lat_caixa, lon_caixa]],
+                            color='gray', weight=2, dash_array="5,5").add_to(mapa)
 
-        folium.Marker(
-            location=[lat_caixa, lon_caixa],
-            tooltip=f"{linha['Identificador']}",
-            icon=folium.Icon(color='green', icon='hdd', prefix='fa')
-        ).add_to(marcadores)
-
-        folium.Marker(
-            location=[lat_ponto, lon_ponto],
-            tooltip=f"{linha['Nome do Ponto de Referência']}",
-            icon=folium.Icon(color='blue', icon='info-sign')
-        ).add_to(marcadores)
+        folium.Marker(location=[lat_caixa, lon_caixa],
+                      tooltip=f"{linha['Identificador']}",
+                      icon=folium.Icon(color='green', icon='hdd', prefix='fa')).add_to(marcadores)
+        folium.Marker(location=[lat_ponto, lon_ponto],
+                      tooltip=f"{linha['Nome do Ponto de Referência']}",
+                      icon=folium.Icon(color='blue', icon='info-sign')).add_to(marcadores)
 
     mapa.save(caminho_html)
     return caminho_html
@@ -563,6 +539,7 @@ def gerar_kmz_unico(nome_base, rotas_info):
         tipo_cabo = item.get("tipo_cabo", "")
         rota_postes_coords = item.get("rota_postes_coords") or []
         dist_postes_m = item.get("dist_postes_m")
+        postes_pts = item.get("postes_pts_coords") or []   # <<< NOVO
 
         pasta = kml.newfolder(name=nome_ponto)
 
@@ -582,9 +559,8 @@ def gerar_kmz_unico(nome_base, rotas_info):
             linha.style.linestyle.color = cor_linha
             linha.style.linestyle.width = 4
 
-        # >>> NOVO: marcadores dos POSTES com o ícone solicitado
+        # Rota por Postes
         if rota_postes_coords:
-            # (opcional) linha leve ligando os postes
             linha_postes = pasta.newlinestring(name=f"Trajeto por Postes - {nome_ponto}")
             linha_postes.coords = rota_postes_coords
             linha_postes.style.linestyle.color = simplekml.Color.changealphaint(160, simplekml.Color.cyan)
@@ -592,27 +568,19 @@ def gerar_kmz_unico(nome_base, rotas_info):
             if dist_postes_m:
                 linha_postes.description = f"Rota por postes (~{round(dist_postes_m, 2)} m)"
 
-            for idx, (lon, lat) in enumerate(rota_postes_coords):
-                # pula início/fim se quiser enfatizar apenas os postes intermediários
-                if idx == 0 or idx == len(rota_postes_coords) - 1:
-                    continue
-                p_poste = pasta.newpoint(coords=[(lon, lat)])
-                p_poste.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/paddle/P.png"
-                p_poste.style.iconstyle.scale = 0.9
+        # Postes considerados (marcadores)
+        if postes_pts:
+            folder_pts = pasta.newfolder(name="Postes (considerados)")
+            for (lon, lat) in postes_pts:
+                p = folder_pts.newpoint(coords=[(lon, lat)])
+                p.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/paddle/P.png"
+                p.style.iconstyle.scale = 1.0
 
         # Ponto e Caixa
-        ponto_ref = pasta.newpoint(
-            name=nome_ponto,
-            coords=[ponto_consultado],
-            description=f"Localização consultada: {ponto_consultado}",
-        )
+        ponto_ref = pasta.newpoint(name=nome_ponto, coords=[ponto_consultado])
         ponto_ref.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/pushpin/ltblu-pushpin.png"
 
-        caixa_ponto = pasta.newpoint(
-            name=nome_caixa,
-            coords=[caixa_coords],
-            description=f"Coordenadas: {caixa_coords}",
-        )
+        caixa_ponto = pasta.newpoint(name=nome_caixa, coords=[caixa_coords])
         caixa_ponto.style.iconstyle.color = simplekml.Color.white
         caixa_ponto.style.iconstyle.scale = 1.2
         caixa_ponto.style.iconstyle.icon.href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
@@ -621,3 +589,271 @@ def gerar_kmz_unico(nome_base, rotas_info):
     kml_path = os.path.join("saida_kmz", f"{nome_base}.kmz")
     kml.savekmz(kml_path)
     return kml_path
+
+# =========================
+# CLASSIFICAÇÃO DE POSTES + BOM (sem dielétrico)
+# =========================
+def classificar_postes_por_angulo_e_regra(rota_postes_coords, ang_inf=165.0, ang_sup=195.0, max_passantes=4):
+    """
+    Entrada: polilinha (lon,lat) do trajeto por postes incluindo caixa e ponto nas pontas.
+    Saída: contagens e materiais. Sem dielétrico (SUPA faz a função nos passantes).
+    """
+    if not rota_postes_coords or len(rota_postes_coords) < 3:
+        return {
+            "postes": [],
+            "QtdPosteEnc": 0, "QtdPostePas": 0,
+            "QtdSUPA": 0, "QtdBAP": 0, "QtdALCA": 0
+        }
+
+    to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    coords_xy = [to_3857.transform(lon, lat) for (lon, lat) in rota_postes_coords]
+
+    postes_info = []
+    qtd_enc, qtd_pas = 0, 0
+    passantes_desde_encab = 0
+
+    for i in range(1, len(coords_xy) - 1):
+        lon, lat = rota_postes_coords[i]
+        if i == 1:
+            tipo = "encab"
+            passantes_desde_encab = 0
+        else:
+            p0, p1, p2 = coords_xy[i - 1], coords_xy[i], coords_xy[i + 1]
+            ang = _angle(p0, p1, p2)
+            if (ang < ang_inf) or (ang > ang_sup) or (passantes_desde_encab >= max_passantes):
+                tipo = "encab"
+                passantes_desde_encab = 0
+            else:
+                tipo = "pass"
+                passantes_desde_encab += 1
+
+        postes_info.append({"idx": i, "lon": lon, "lat": lat, "tipo": tipo})
+        if tipo == "encab":
+            qtd_enc += 1
+        else:
+            qtd_pas += 1
+
+    # Materiais (sem dielétrico)
+    qtd_supa = 2 * qtd_enc + 1 * qtd_pas
+    qtd_bap  = 1 * qtd_enc + 1 * qtd_pas
+    qtd_alca = 2 * qtd_enc
+
+    return {
+        "postes": postes_info,
+        "QtdPosteEnc": qtd_enc,
+        "QtdPostePas": qtd_pas,
+        "QtdSUPA": qtd_supa,
+        "QtdBAP": qtd_bap,
+        "QtdALCA": qtd_alca
+    }
+
+# =========================
+# PRINT SATELITAL + DOCX + ZIP
+# =========================
+def _plot_print_satelital_esri(ponto_latlon, caixa_latlon, rota_osrm_coords,
+                               rota_postes_coords=None, incluir_postes=False,
+                               postes_coords=None, out_png_path=None,
+                               padding_m=60, width_px=1800, height_px=1200, dpi=180,
+                               show_osrm=True, show_postes=True):
+    if not show_osrm and not show_postes:
+        show_osrm = True
+    if show_osrm and not rota_osrm_coords:
+        rota_osrm_coords = [(ponto_latlon[1], ponto_latlon[0]), (caixa_latlon[1], caixa_latlon[0])]
+
+    layers = []
+    if show_osrm and rota_osrm_coords:
+        gdf_osrm = gpd.GeoDataFrame(geometry=[LineString([(x, y) for x, y in rota_osrm_coords])], crs="EPSG:4326")
+        layers.append(("osrm", gdf_osrm))
+    gdf_pt = gpd.GeoDataFrame(geometry=[Point(ponto_latlon[1], ponto_latlon[0])], crs="EPSG:4326")
+    gdf_cx = gpd.GeoDataFrame(geometry=[Point(caixa_latlon[1], caixa_latlon[0])], crs="EPSG:4326")
+    layers.extend([("pt", gdf_pt), ("cx", gdf_cx)])
+
+    if show_postes and rota_postes_coords:
+        gdf_postes_line = gpd.GeoDataFrame(geometry=[LineString([(x, y) for x, y in rota_postes_coords])], crs="EPSG:4326")
+        layers.append(("postes_line", gdf_postes_line))
+
+    if incluir_postes and postes_coords:
+        gdf_postes_pts = gpd.GeoDataFrame(geometry=[Point(lon, lat) for (lon, lat) in postes_coords], crs="EPSG:4326")
+        layers.append(("postes_pts", gdf_postes_pts))
+
+    layers_3857 = [(name, gdf.to_crs("EPSG:3857")) for name, gdf in layers]
+    dict_3857 = {name: gdf for name, gdf in layers_3857}
+
+    total = None
+    for _, g in layers_3857:
+        total = g if total is None else pd.concat([total, g])
+    minx, miny, maxx, maxy = total.total_bounds
+    pad = padding_m
+    minx -= pad; miny -= pad; maxx += pad; maxy += pad
+
+    fig_w_in = width_px / dpi
+    fig_h_in = height_px / dpi
+    fig, ax = plt.subplots(1, 1, figsize=(fig_w_in, fig_h_in), dpi=dpi)
+
+    ax.set_xlim(minx, maxx); ax.set_ylim(miny, maxy)
+    try:
+        span_m = max(maxx - minx, maxy - miny)
+        if span_m <= 150:      z = 19
+        elif span_m <= 300:    z = 18
+        elif span_m <= 800:    z = 17
+        elif span_m <= 2000:   z = 16
+        else:                  z = 15
+        ctx.add_basemap(ax, source=ctx.providers.Esri.WorldImagery, crs="EPSG:3857", zoom=z)
+    except Exception:
+        try:
+            ctx.add_basemap(ax, source=ctx.providers.Esri.WorldImageryClarity, crs="EPSG:3857", zoom=17)
+        except Exception:
+            ax.set_facecolor("white")
+            ax.text(0.01, 0.01, "Satélite indisponível nesta execução", transform=ax.transAxes, fontsize=8, color="gray")
+
+    if dict_3857.get("osrm") is not None:
+        dict_3857["osrm"].plot(ax=ax, color=None, edgecolor="tab:red", linewidth=3, zorder=5)
+    if dict_3857.get("postes_line") is not None:
+        dict_3857["postes_line"].plot(ax=ax, color=None, edgecolor="tab:cyan", linewidth=2.5, linestyle="--", zorder=6)
+
+    dict_3857["cx"].plot(ax=ax, marker="s", markersize=70, edgecolor="black", facecolor="yellow", zorder=7)
+    dict_3857["pt"].plot(ax=ax, marker="o", markersize=70, edgecolor="black", facecolor="lime", zorder=7)
+
+    if dict_3857.get("postes_pts") is not None:
+        dict_3857["postes_pts"].plot(ax=ax, marker=".", markersize=12, color="cyan", alpha=0.9, zorder=6)
+
+    legend_elems = []
+    if dict_3857.get("osrm") is not None:
+        legend_elems.append(Line2D([0],[0], color="tab:red", lw=3, label="Rota OSRM"))
+    if dict_3857.get("postes_line") is not None:
+        legend_elems.append(Line2D([0],[0], color="tab:cyan", lw=2.5, ls="--", label="Rota por Postes"))
+    legend_elems.extend([
+        Line2D([0],[0], marker="s", color="black", markerfacecolor="yellow", markersize=10, lw=0, label="Caixa"),
+        Line2D([0],[0], marker="o", color="black", markerfacecolor="lime", markersize=10, lw=0, label="Ponto"),
+        Line2D([0],[0], marker=".", color="tab:cyan", lw=0, label="Postes")
+    ])
+    ax.legend(handles=legend_elems, loc="lower right", fontsize=8, framealpha=0.7)
+
+    ax.axis("off")
+    os.makedirs(os.path.dirname(out_png_path), exist_ok=True)
+    fig.savefig(out_png_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_png_path
+
+def _criar_docx_descritivo(simples_dict, png_path, out_docx_path, bom_dict=None):
+    doc = Document()
+    doc.add_heading(f"Descritivo de Instalação – {simples_dict.get('Nome do Ponto de Referência') or 'Ponto'}", level=1)
+
+    p_id = doc.add_paragraph()
+    p_id.add_run("Ponto: ").bold = True
+    p_id.add_run(simples_dict.get('Nome do Ponto de Referência') or '—')
+    p_id.add_run("\nCoordenadas do Ponto: ").bold = True
+    p_id.add_run(simples_dict.get('Localização do Ponto') or '—')
+    p_id.add_run("\nCaixa: ").bold = True
+    p_id.add_run(simples_dict.get('Identificador') or '—')
+    p_id.add_run("\nCoordenadas da Caixa: ").bold = True
+    p_id.add_run(simples_dict.get('Localização da Caixa') or '—')
+    p_id.add_run("\nCidade/UF da Caixa: ").bold = True
+    p_id.add_run(f"{simples_dict.get('Cidade','')}/{simples_dict.get('Estado','')}")
+
+    doc.add_paragraph(f"Data de geração: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    doc.add_picture(png_path, width=Inches(6.5))
+
+    # Resumo técnico
+    dist_osrm = simples_dict.get('Distância da Rota (m)')
+    dist_postes = simples_dict.get('Distância via Postes (m)')
+    tipo = simples_dict.get('Tipo de Cabo')
+    viab = simples_dict.get('Viabilidade', '')
+    resumo = doc.add_paragraph()
+    resumo.add_run("\nResumo técnico\n").bold = True
+    resumo.add_run(f"• Distância OSRM: {dist_osrm} m\n")
+    if dist_postes:
+        resumo.add_run(f"• Distância via postes: {dist_postes} m\n")
+    resumo.add_run(f"• Tipo de cabo recomendado: {tipo}\n")
+    if bom_dict:
+        resumo.add_run(f"• Postes encabeçados: {bom_dict.get('QtdPosteEnc',0)}\n")
+        resumo.add_run(f"• Postes passantes: {bom_dict.get('QtdPostePas',0)}\n")
+    if viab:
+        resumo.add_run(f"• Viabilidade: {viab}\n")
+
+    # Lista de Materiais (sem dielétrico)
+    if bom_dict:
+        doc.add_paragraph("\nLista de Materiais para Ancoragem").bold = True
+        tabela = doc.add_table(rows=1, cols=4)
+        hdr = tabela.rows[0].cells
+        hdr[0].text = "Item"; hdr[1].text = "Material"; hdr[2].text = "Quantidade"; hdr[3].text = "Unidade"
+
+        itens = [
+            ("Suporte para Ancoragem de Fibra (SUPA)", bom_dict.get("QtdSUPA", 0), "UND"),
+            ("Braçadeira Ajustável para Postes (BAP)", bom_dict.get("QtdBAP", 0), "UND"),
+            ("Alça Pré-formada", bom_dict.get("QtdALCA", 0), "UND"),
+        ]
+        for i, (nome, qtd, un) in enumerate(itens, start=1):
+            row = tabela.add_row().cells
+            row[0].text = str(i)
+            row[1].text = nome
+            row[2].text = str(int(qtd))
+            row[3].text = un
+
+    os.makedirs(os.path.dirname(out_docx_path), exist_ok=True)
+    doc.save(out_docx_path)
+    return out_docx_path
+
+def gerar_descritivos_zip(df_resultados, incluir_rota_postes=True, incluir_postes_pts=False, rota_no_print="Ambas"):
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_out = os.path.join("out", f"descritivos_{ts}")
+    pasta_maps = os.path.join(base_out, "maps")
+    pasta_docs = os.path.join(base_out, "docs")
+    os.makedirs(pasta_maps, exist_ok=True)
+    os.makedirs(pasta_docs, exist_ok=True)
+
+    rota_no_print = (rota_no_print or "Ambas").strip().lower()
+    show_osrm = rota_no_print in ("osrm", "ambas")
+    show_postes = rota_no_print in ("postes", "ambas")
+
+    docx_paths = []
+
+    for _, row in df_resultados.iterrows():
+        lat_pt, lon_pt = map(float, row['Localização do Ponto'].split(', '))
+        lat_cx, lon_cx = map(float, row['Localização da Caixa'].split(', '))
+
+        ponto_latlon = (lat_pt, lon_pt)
+        caixa_latlon = (lat_cx, lon_cx)
+
+        rota_osrm_coords = row.get('rota_osrm_coords') or []
+        rota_postes_coords = row.get('rota_postes_coords') or []
+
+        # respeita a escolha do usuário
+        if not incluir_rota_postes:
+            rota_postes_coords = []
+
+        # BOM + pontos dos postes
+        bom_dict = None
+        postes_pts_coords = row.get('postes_pts_coords') or []
+        if rota_postes_coords:
+            bom_dict = classificar_postes_por_angulo_e_regra(
+                rota_postes_coords, ang_inf=165.0, ang_sup=195.0, max_passantes=4
+            )
+
+        nome_base = f"PONTO-{(row.get('Nome do Ponto de Referência') or 'Ponto').replace(' ','_')}__CAIXA-{row.get('Identificador')}"
+        png_path = os.path.join(pasta_maps, f"map_{nome_base}.png")
+        docx_path = os.path.join(pasta_docs, f"Descritivo_{nome_base}.docx")
+
+        _plot_print_satelital_esri(
+            ponto_latlon, caixa_latlon,
+            rota_osrm_coords=rota_osrm_coords,
+            rota_postes_coords=rota_postes_coords,
+            incluir_postes=incluir_postes_pts,
+            postes_coords=postes_pts_coords if incluir_postes_pts else None,
+            out_png_path=png_path,
+            show_osrm=show_osrm,
+            show_postes=show_postes
+        )
+
+        _criar_docx_descritivo(row, png_path, docx_path, bom_dict=bom_dict)
+        docx_paths.append(docx_path)
+
+    zip_path = os.path.join(base_out, "descritivos.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in docx_paths:
+            zf.write(p, arcname=os.path.join("docs", os.path.basename(p)))
+        for fname in os.listdir(pasta_maps):
+            zf.write(os.path.join(pasta_maps, fname), arcname=os.path.join("maps", fname))
+
+    return zip_path
