@@ -445,7 +445,7 @@ def analisar_distancia_entre_pontos(
             distancia_real = geodesic(coord_ponto, coord_caixa_proxima).meters
 
         distancia_metros = round(distancia_real, 2)
-        tipo_cabo = "Drop" if distancia_metros < 250 else "Auto Sustentado"
+        tipo_cabo = "Drop" if distancia_metros <= 250 else "Auto Sustentado"
 
         ponto_coords = (ponto['LONGITUDE'], ponto['LATITUDE'])
         caixa_coords = (caixa_proxima['Longitude'], caixa_proxima['Latitude'])
